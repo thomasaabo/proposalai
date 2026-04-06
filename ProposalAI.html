@@ -183,7 +183,7 @@ function LoadingProgress({ estimatedSeconds, messages, onComplete }) {
 }
 
 // ── Header ──
-function Header({ step, onStepClick }) {
+function Header({ step, maxStep, onStepClick }) {
   const steps = [{n:1,l:'Upload'},{n:2,l:'Analysis'},{n:3,l:'Questions'},{n:4,l:'Proposal'}];
   return (
     <header className="bg-navy-900 text-white shadow-lg">
@@ -196,16 +196,21 @@ function Header({ step, onStepClick }) {
           </div>
         </div>
         <nav className="hidden md:flex items-center gap-1">
-          {steps.map((s,i) => (
-            <div key={s.n} className="flex items-center">
-              <button onClick={() => step > s.n && onStepClick && onStepClick(s.n)}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all ${step===s.n?'bg-gold-400 text-navy-900 font-semibold':step>s.n?'bg-navy-700 text-emerald-400 cursor-pointer hover:bg-navy-600':'text-navy-400'}`}>
-                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${step>s.n?'bg-emerald-400 text-navy-900':''}`}>{step>s.n?'✓':s.n}</span>
-                {s.l}
-              </button>
-              {i<3 && <div className={`w-8 h-0.5 mx-1 ${step>s.n?'bg-emerald-400':'bg-navy-700'}`}/>}
-            </div>
-          ))}
+          {steps.map((s,i) => {
+            const visited = s.n <= maxStep;
+            const isCurrent = s.n === step;
+            const canClick = visited && !isCurrent;
+            return (
+              <div key={s.n} className="flex items-center">
+                <button onClick={() => canClick && onStepClick && onStepClick(s.n)}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all ${isCurrent?'bg-gold-400 text-navy-900 font-semibold':canClick?'bg-navy-700 text-emerald-400 cursor-pointer hover:bg-navy-600':'text-navy-400'}`}>
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${visited && !isCurrent?'bg-emerald-400 text-navy-900':''}`}>{visited && !isCurrent?'✓':s.n}</span>
+                  {s.l}
+                </button>
+                {i<3 && <div className={`w-8 h-0.5 mx-1 ${s.n < maxStep?'bg-emerald-400':'bg-navy-700'}`}/>}
+              </div>
+            );
+          })}
         </nav>
       </div>
     </header>
@@ -1184,30 +1189,44 @@ const DEFAULT_API_KEY = ''; // Enter key in UI or set here for local dev
 function App() {
   const [apiKey, setApiKey] = useState(DEFAULT_API_KEY);
   const [step, setStep] = useState(1);
+  const [maxStep, setMaxStep] = useState(1);
   const [docs, setDocs] = useState([]);
   const [analysis, setAnalysis] = useState(null);
   const [questionsData, setQuestionsData] = useState(null);
   const [proposalData, setProposalData] = useState(null);
 
-  const handleStepClick = (newStep) => {
-    if (newStep < step) setStep(newStep);
-  };
+  function goToStep(n) {
+    setStep(n);
+    setMaxStep(prev => Math.max(prev, n));
+  }
 
-  if (!apiKey) return <><Header step={0} onStepClick={handleStepClick}/><ApiKeySetup onReady={setApiKey}/></>;
+  // Header nav: go to any visited step (no data clearing — just view what's there)
+  function handleStepClick(newStep) {
+    if (newStep <= maxStep && newStep !== step) setStep(newStep);
+  }
+
+  // "Generate Proposal Draft" button: always regenerate since answers may have changed
+  function handleQuestionsComplete(qs) {
+    setQuestionsData(qs);
+    setProposalData(null); // Force regeneration with updated answers
+    goToStep(4);
+  }
+
+  if (!apiKey) return <><Header step={0} maxStep={0} onStepClick={handleStepClick}/><ApiKeySetup onReady={setApiKey}/></>;
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header step={step} onStepClick={handleStepClick}/>
+      <Header step={step} maxStep={maxStep} onStepClick={handleStepClick}/>
       <main className="flex-1 px-6 py-8">
-        {step===1 && <DocumentIntake apiKey={apiKey} onComplete={d=>{setDocs(d);setStep(2);}}/>}
-        {step===2 && <AnalysisView apiKey={apiKey} documents={docs} initialAnalysis={analysis} onComplete={a=>{setAnalysis(a);setStep(3);}} onBack={() => setStep(1)}/>}
-        {step===3 && <QuestionsFlow apiKey={apiKey} analysis={analysis} documents={docs} priorProposals={docs.filter(d=>d.type==='prior_proposal')} initialQuestions={questionsData} onComplete={qs=>{setQuestionsData(qs);setStep(4);}} onBack={() => setStep(2)}/>}
+        {step===1 && <DocumentIntake apiKey={apiKey} onComplete={d=>{setDocs(d);goToStep(2);}}/>}
+        {step===2 && <AnalysisView apiKey={apiKey} documents={docs} initialAnalysis={analysis} onComplete={a=>{setAnalysis(a);goToStep(3);}} onBack={() => setStep(1)}/>}
+        {step===3 && <QuestionsFlow apiKey={apiKey} analysis={analysis} documents={docs} priorProposals={docs.filter(d=>d.type==='prior_proposal')} initialQuestions={questionsData} onComplete={handleQuestionsComplete} onBack={() => setStep(2)}/>}
         {step===4 && <ProposalView apiKey={apiKey} analysis={analysis} answers={questionsData||[]} priorProposals={docs.filter(d=>d.type==='prior_proposal')} initialProposal={proposalData} onProposalReady={setProposalData} onBack={() => setStep(3)}/>}
       </main>
       <footer className="border-t border-navy-100 bg-white/80 py-4 px-6">
         <div className="max-w-7xl mx-auto flex justify-between text-xs text-navy-400">
           <span>ProposalAI — Government RFP Response Engine</span>
-          <span>v0.7 — Powered by Claude AI</span>
+          <span>v0.8 — Powered by Claude AI</span>
         </div>
       </footer>
     </div>
