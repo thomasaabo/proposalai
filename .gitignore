@@ -1,0 +1,7 @@
+# ProposalAI dependencies and secrets
+node_modules/
+.env
+dist/
+uploads/
+.DS_Store
+*.log

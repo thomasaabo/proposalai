@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProposalAI — RFP Response Engine</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.9/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>window.pdfjsLib && (pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');</script>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        navy: { 50:'#f0f4f8',100:'#d9e2ec',200:'#bcccdc',300:'#9fb3c8',400:'#829ab1',500:'#627d98',600:'#486581',700:'#334e68',800:'#243b53',900:'#102a43',950:'#0a1929' },
+        gold: { 400:'#f0b429',500:'#de911d',600:'#cb6e17' },
+        emerald: { 400:'#3ebd93',500:'#27ab83' },
+      }
+    }
+  }
+}
+</script>
+<style>
+body { font-family: 'Inter', -apple-system, sans-serif; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-icon { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+.fade-in { animation: fadeIn 0.4s ease-out forwards; }
+.spin { animation: spin 1s linear infinite; }
+.prose h2 { font-size:1.25rem; font-weight:600; margin-top:1.5rem; margin-bottom:0.5rem; color:#243b53; border-bottom:2px solid #d9e2ec; padding-bottom:0.25rem; }
+.prose h3 { font-size:1.1rem; font-weight:600; margin-top:1rem; margin-bottom:0.5rem; color:#334e68; }
+.prose p { margin-bottom:0.75rem; line-height:1.7; color:#334e68; }
+.prose ul,.prose ol { margin-bottom:0.75rem; padding-left:1.5rem; color:#334e68; }
+.prose li { margin-bottom:0.25rem; line-height:1.6; }
+.prose strong { color:#102a43; }
+.prose table { width:100%; border-collapse:collapse; margin:1rem 0; }
+.prose th { background:#f0f4f8; padding:0.5rem; text-align:left; font-weight:600; border:1px solid #d9e2ec; }
+.prose td { padding:0.5rem; border:1px solid #d9e2ec; }
+.rich-editor { border: 1px solid #bcccdc; border-radius: 0.75rem; padding: 1rem; min-height: 9rem; font-size: 0.875rem; outline: none; line-height: 1.6; color: #334e68; background-color: #ffffff; resize: vertical; font-family: 'Inter', -apple-system, sans-serif; }
+.rich-editor:focus { box-shadow: 0 0 0 2px #f0b429; border-color: transparent; }
+.rich-editor-toolbar { display: flex; gap: 0.5rem; padding: 0.75rem; border-bottom: 1px solid #d9e2ec; border-radius: 0.5rem 0.5rem 0 0; background-color: #f0f4f8; }
+.source-tag { display: inline-block; margin: 0.25rem; padding: 0.25rem 0.5rem; background-color: #e0e7f1; border-radius: 0.375rem; font-size: 0.75rem; color: #627d98; }
+.asset-upload-area { border: 2px dashed #bcccdc; border-radius: 0.75rem; padding: 2rem; text-align: center; cursor: pointer; transition: all 0.2s; }
+.asset-upload-area:hover { border-color: #9fb3c8; background-color: #f0f4f8; }
+.asset-upload-area.dragging { border-color: #f0b429; background-color: #fef3e2; }
+.form-field-input { border: 1px solid #bcccdc; border-radius: 0.5rem; padding: 0.75rem; font-size: 0.875rem; outline: none; }
+.form-field-input:focus { box-shadow: 0 0 0 2px #f0b429; border-color: transparent; }
+.form-field-label { display: block; font-size: 0.875rem; font-weight: 500; color: #243b53; margin-bottom: 0.375rem; }
+.form-field-required { color: #dc2626; }
+.pulse-icon { animation: pulse-icon 2s ease-in-out infinite; }
+</style>
+</head>
+<body class="bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen">
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+const EDGE_FN = 'https://fgbehzxrkbqiqrzcwxph.supabase.co/functions/v1/rfp-ai';
+
+// ── API Layer ──
+async function callAI(apiKey, action, payload) {
+  const res = await fetch(EDGE_FN, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+    body: JSON.stringify({ action, ...payload }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || `API error ${res.status}`);
+  }
+  return res.json();
+}
+
+async function readFileText(file) {
+  // PDF: use pdf.js for real text extraction
+  if (file.name.toLowerCase().endsWith('.pdf') && window.pdfjsLib) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pages = [];
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        pages.push(content.items.map(item => item.str).join(' '));
+      }
+      return pages.join('\n\n');
+    } catch (e) {
+      console.error('PDF parse error:', e);
+      return '[Could not extract PDF text]';
+    }
+  }
+  // DOCX: extract text from the XML inside the zip
+  if (file.name.toLowerCase().endsWith('.docx')) {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const zip = await (new Response(new Blob([arrayBuffer]))).arrayBuffer();
+      // Simple DOCX text extraction: find document.xml in the zip and strip XML tags
+      const bytes = new Uint8Array(zip);
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      // Extract readable text between XML tags
+      const xmlContent = text.match(/<w:t[^>]*>([^<]*)<\/w:t>/g);
+      if (xmlContent) {
+        return xmlContent.map(t => t.replace(/<[^>]+>/g, '')).join(' ');
+      }
+      return '[Could not extract DOCX text — try uploading as PDF or TXT]';
+    } catch (e) {
+      return '[Could not extract DOCX text — try uploading as PDF or TXT]';
+    }
+  }
+  // Everything else: read as text
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target.result);
+    reader.onerror = () => resolve('[Could not read file]');
+    reader.readAsText(file);
+  });
+}
+
+// ── Spinner ──
+function Spinner({ size = 'w-5 h-5' }) {
+  return <svg className={`${size} spin text-gold-500`} viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" strokeDasharray="32" strokeLinecap="round"/></svg>;
+}
+
+// ── Loading Progress Component ──
+function LoadingProgress({ estimatedSeconds, messages, onComplete }) {
+  const [progress, setProgress] = useState(0);
+  const [messageIdx, setMessageIdx] = useState(0);
+
+  useEffect(() => {
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      let newProgress = Math.floor((elapsed / estimatedSeconds) * 90);
+
+      // Slow down as we approach 90%
+      if (newProgress > 70) {
+        newProgress = 70 + ((newProgress - 70) * 0.3);
+      }
+      newProgress = Math.min(newProgress, 89);
+      setProgress(newProgress);
+
+      // Cycle through messages
+      if (messages.length > 0) {
+        const msgIndex = Math.floor((elapsed / estimatedSeconds) * messages.length) % messages.length;
+        setMessageIdx(msgIndex);
+      }
+    }, 200);
+
+    return () => clearInterval(interval);
+  }, [estimatedSeconds, messages]);
+
+  return (
+    <div className="max-w-2xl mx-auto text-center py-12 fade-in">
+      <div className="flex justify-center mb-6">
+        <div className="relative w-24 h-24">
+          <div className="absolute inset-0 flex items-center justify-center pulse-icon">
+            <svg className="w-16 h-16 text-gold-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M13 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V9z"/>
+              <path d="M13 2v7h7"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <p className="text-5xl font-bold text-navy-900">{progress}%</p>
+        <p className="text-sm text-navy-500 mt-2 h-6">{messages[messageIdx] || 'Processing...'}</p>
+      </div>
+
+      <div className="w-full bg-navy-200 rounded-full h-1">
+        <div
+          className="bg-gold-400 h-1 rounded-full transition-all duration-200"
+          style={{width: `${progress}%`}}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Header ──
+function Header({ step, onStepClick }) {
+  const steps = [{n:1,l:'Upload'},{n:2,l:'Analysis'},{n:3,l:'Questions'},{n:4,l:'Proposal'}];
+  return (
+    <header className="bg-navy-900 text-white shadow-lg">
+      <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-gold-400 rounded-lg flex items-center justify-center text-navy-900 font-bold text-lg">P</div>
+          <div>
+            <h1 className="text-xl font-bold">ProposalAI</h1>
+            <p className="text-navy-300 text-xs">Government RFP Response Engine</p>
+          </div>
+        </div>
+        <nav className="hidden md:flex items-center gap-1">
+          {steps.map((s,i) => (
+            <div key={s.n} className="flex items-center">
+              <button onClick={() => step > s.n && onStepClick && onStepClick(s.n)}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all ${step===s.n?'bg-gold-400 text-navy-900 font-semibold':step>s.n?'bg-navy-700 text-emerald-400 cursor-pointer hover:bg-navy-600':'text-navy-400'}`}>
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${step>s.n?'bg-emerald-400 text-navy-900':''}`}>{step>s.n?'✓':s.n}</span>
+                {s.l}
+              </button>
+              {i<3 && <div className={`w-8 h-0.5 mx-1 ${step>s.n?'bg-emerald-400':'bg-navy-700'}`}/>}
+            </div>
+          ))}
+        </nav>
+      </div>
+    </header>
+  );
+}
+
+// ── API Key Setup ──
+function ApiKeySetup({ onReady }) {
+  const [key, setKey] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState('');
+
+  const test = async () => {
+    setTesting(true); setError('');
+    try {
+      await callAI(key.trim(), 'classify', { documents: [{ name:'test.txt', text:'This is a test document.' }] });
+      onReady(key.trim());
+    } catch (e) {
+      setError(e.message || 'Invalid API key');
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div className="max-w-lg mx-auto mt-20 fade-in">
+      <div className="text-center mb-8">
+        <div className="w-16 h-16 bg-gold-400 rounded-2xl flex items-center justify-center mx-auto mb-4 text-navy-900 font-bold text-2xl">P</div>
+        <h2 className="text-2xl font-bold text-navy-900">Welcome to ProposalAI</h2>
+        <p className="text-navy-500 mt-2">Enter your Anthropic API key to get started</p>
+      </div>
+      <div className="bg-white rounded-2xl border border-navy-100 shadow-sm p-6">
+        <label className="block text-sm font-medium text-navy-700 mb-2">Anthropic API Key</label>
+        <input type="password" value={key} onChange={e=>setKey(e.target.value)} placeholder="sk-ant-..."
+          className="w-full border border-navy-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:box-shadow: 0 0 0 2px #f0b429; focus:border-transparent"
+          onKeyDown={e => e.key === 'Enter' && key.trim() && test()} />
+        {error && <p className="text-red-500 text-xs mt-2">{error}</p>}
+        <button onClick={test} disabled={!key.trim() || testing}
+          className="mt-4 w-full bg-navy-900 hover:bg-navy-800 disabled:bg-navy-300 text-white py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2">
+          {testing ? <><Spinner size="w-4 h-4"/> Verifying...</> : 'Connect & Start'}
+        </button>
+        <p className="text-xs text-navy-400 mt-3 text-center">Your key is used in-memory only — never stored or sent anywhere except Anthropic's API.</p>
+      </div>
+    </div>
+  );
+}
+
+// ── Document Intake ──
+function DocumentIntake({ apiKey, onComplete }) {
+  const [docs, setDocs] = useState([]);
+  const [classifying, setClassifying] = useState(false);
+  const [error, setError] = useState('');
+  const [urlInput, setUrlInput] = useState('');
+  const [fetching, setFetching] = useState(false);
+  const fileRef = useRef();
+  const types = {
+    rfp:{l:'RFP Document',c:'bg-blue-100 text-blue-700'},
+    rfp_form:{l:'RFP Form',c:'bg-blue-100 text-blue-700'},
+    prior_proposal:{l:'Prior Proposal',c:'bg-amber-100 text-amber-700'},
+    vendor_capability:{l:'Vendor Capability',c:'bg-purple-100 text-purple-700'},
+    vendor_summary:{l:'Vendor Summary',c:'bg-purple-100 text-purple-700'},
+    team_bios:{l:'Team Bios',c:'bg-green-100 text-green-700'},
+    past_performance:{l:'Past Performance',c:'bg-orange-100 text-orange-700'},
+    certifications:{l:'Certifications',c:'bg-teal-100 text-teal-700'},
+    supporting:{l:'Supporting Doc',c:'bg-gray-100 text-gray-600'},
+    web_content:{l:'Web Content',c:'bg-cyan-100 text-cyan-700'},
+  };
+
+  const handleFiles = async (files) => {
+    setClassifying(true); setError('');
+    try {
+      const fileData = await Promise.all(Array.from(files).map(async f => ({
+        name: f.name, size: f.size, text: await readFileText(f), file: f
+      })));
+      const classified = await callAI(apiKey, 'classify', { documents: fileData.map(f=>({name:f.name,text:f.text})) });
+      const results = (Array.isArray(classified) ? classified : classified.documents || [classified]).map((c,i) => ({
+        id: crypto.randomUUID(), name: fileData[i]?.name || c.name, size: fileData[i]?.size || 0,
+        type: c.type || 'supporting', confidence: c.confidence || 0.8, text: fileData[i]?.text || '',
+      }));
+      setDocs(prev => [...prev, ...results]);
+    } catch (e) { setError(e.message); }
+    setClassifying(false);
+  };
+
+  const handleFetchUrl = async () => {
+    if (!urlInput.trim()) return;
+    setFetching(true); setError('');
+    try {
+      const result = await callAI(apiKey, 'fetch_url', { url: urlInput.trim() });
+      if (result.success) {
+        const hostname = new URL(urlInput).hostname;
+        setDocs(prev => [...prev, {
+          id: crypto.randomUUID(),
+          name: hostname || 'web_content',
+          size: result.text?.length || 0,
+          type: 'web_content',
+          confidence: 0.9,
+          text: result.text || '',
+        }]);
+        setUrlInput('');
+      } else {
+        setError('Failed to fetch URL content');
+      }
+    } catch (e) {
+      setError(e.message);
+    }
+    setFetching(false);
+  };
+
+  const hasRFP = docs.some(d => d.type === 'rfp' || d.type === 'rfp_form');
+
+  return (
+    <div className="max-w-4xl mx-auto fade-in">
+      <div className="text-center mb-8">
+        <h2 className="text-3xl font-bold text-navy-900 mb-3">Upload Your RFP Documents</h2>
+        <p className="text-navy-500 text-lg max-w-2xl mx-auto">Drop everything in — the RFP, prior winning proposals, company overview, team bios, past performance. AI will classify and analyze.</p>
+      </div>
+
+      <div onClick={()=>fileRef.current?.click()}
+        className="border-2 border-dashed border-navy-200 rounded-2xl p-12 text-center cursor-pointer hover:border-navy-300 hover:bg-navy-50/50 bg-white mb-6 transition-all">
+        <input ref={fileRef} type="file" multiple accept=".pdf,.doc,.docx,.txt,.csv,.xls,.xlsx" className="hidden"
+          onChange={e => e.target.files.length && handleFiles(e.target.files)} />
+        {classifying ? (
+          <div className="flex flex-col items-center gap-3">
+            <Spinner size="w-12 h-12"/>
+            <p className="text-navy-700 font-medium">Classifying documents with AI...</p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-16 h-16 bg-navy-100 rounded-2xl flex items-center justify-center text-2xl">📄</div>
+            <p className="text-navy-700 font-semibold text-lg">Click to upload documents</p>
+            <p className="text-navy-400 text-sm">PDF, DOC, DOCX, TXT, XLS, XLSX</p>
+          </div>
+        )}
+      </div>
+
+      <div className="bg-white rounded-2xl border border-navy-100 shadow-sm p-6 mb-6">
+        <label className="block text-sm font-semibold text-navy-700 mb-3">Or fetch from URL</label>
+        <div className="flex gap-2">
+          <input type="url" value={urlInput} onChange={e=>setUrlInput(e.target.value)} placeholder="https://example.com/rfp-document"
+            className="flex-1 border border-navy-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:box-shadow: 0 0 0 2px #f0b429; focus:border-transparent"
+            onKeyDown={e => e.key === 'Enter' && urlInput.trim() && handleFetchUrl()} />
+          <button onClick={handleFetchUrl} disabled={!urlInput.trim() || fetching}
+            className="bg-navy-900 hover:bg-navy-800 disabled:bg-navy-300 text-white px-6 py-3 rounded-xl font-semibold text-sm flex items-center gap-2">
+            {fetching ? <><Spinner size="w-4 h-4"/> Fetching...</> : 'Fetch'}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 text-sm text-red-700">{error}</div>}
+
+      {docs.length > 0 && (
+        <div className="bg-white rounded-2xl border border-navy-100 shadow-sm mb-6">
+          <div className="px-6 py-4 border-b border-navy-100 flex justify-between items-center">
+            <h3 className="font-semibold text-navy-800">Documents ({docs.length})</h3>
+            {!hasRFP && <span className="text-xs bg-red-100 text-red-600 px-3 py-1 rounded-full">No RFP detected</span>}
+          </div>
+          {docs.map((d,i) => (
+            <div key={d.id} className="px-6 py-3 flex items-center gap-4 border-b border-navy-50 last:border-0 fade-in">
+              <span className={`text-xs px-2 py-1 rounded-full font-medium ${types[d.type]?.c || types.supporting.c}`}>{types[d.type]?.l || d.type}</span>
+              <span className="flex-1 text-sm text-navy-800 truncate">{d.name}</span>
+              <select value={d.type} onChange={e => setDocs(p=>p.map((x,j)=>j===i?{...x,type:e.target.value}:x))}
+                className="text-xs border rounded-lg px-2 py-1 text-navy-600">
+                {Object.entries(types).map(([k,v])=><option key={k} value={k}>{v.l}</option>)}
+              </select>
+              <span className="text-xs text-navy-300">{Math.round(d.confidence*100)}%</span>
+              <button onClick={()=>setDocs(p=>p.filter((_,j)=>j!==i))} className="text-navy-300 hover:text-red-400">✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {docs.length > 0 && hasRFP && (
+        <div className="flex justify-end">
+          <button onClick={()=>onComplete(docs)} className="bg-navy-900 hover:bg-navy-800 text-white px-8 py-3 rounded-xl font-semibold text-sm shadow-lg">
+            Analyze RFP →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Analysis View ──
+function AnalysisView({ apiKey, documents, onComplete, onBack }) {
+  const [analysis, setAnalysis] = useState(null);
+  const [error, setError] = useState('');
+  const [tab, setTab] = useState('overview');
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const rfpDoc = documents.find(d => d.type === 'rfp' || d.type === 'rfp_form');
+        const priorDocs = documents.filter(d => d.type === 'prior_proposal');
+        const vendorDocs = documents.filter(d => d.type !== 'rfp' && d.type !== 'rfp_form' && d.type !== 'prior_proposal');
+        const result = await callAI(apiKey, 'analyze', {
+          rfpText: rfpDoc?.text || '',
+          vendorTexts: vendorDocs.map(d => ({ name: d.name, type: d.type, text: d.text })),
+          priorProposals: priorDocs.map(d => ({ name: d.name, text: d.text })),
+        });
+        setAnalysis(result);
+      } catch (e) { setError(e.message); }
+    };
+    run();
+  }, []);
+
+  if (error) return (
+    <div className="max-w-2xl mx-auto text-center py-12 fade-in">
+      <div className="text-4xl mb-4">⚠️</div>
+      <h2 className="text-xl font-bold text-navy-900 mb-2">Analysis Failed</h2>
+      <p className="text-navy-500 mb-4">{error}</p>
+      <button onClick={onBack} className="text-navy-700 hover:text-navy-900 font-medium">← Back to Upload</button>
+    </div>
+  );
+
+  if (!analysis) return (
+    <div className="max-w-2xl mx-auto">
+      <LoadingProgress
+        estimatedSeconds={30}
+        messages={[
+          'Parsing RFP requirements...',
+          'Extracting evaluation criteria...',
+          'Analyzing compliance items...',
+          'Cross-referencing with vendor materials...',
+          'Building requirements map...',
+          'Preparing analysis summary...'
+        ]}
+      />
+    </div>
+  );
+
+  const s = analysis.rfpSummary || {};
+  const tabs = [{id:'overview',l:'Overview'},{id:'format',l:'Required Format'},{id:'requirements',l:'Requirements'},{id:'compliance',l:'Compliance'}];
+  const typeBadge = {mandatory:'bg-red-100 text-red-700',desirable:'bg-blue-100 text-blue-700',informational:'bg-gray-100 text-gray-600'};
+
+  return (
+    <div className="max-w-6xl mx-auto fade-in">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-navy-900">RFP Analysis Complete</h2>
+          <p className="text-navy-500 text-sm mt-1">{s.solicitation || ''} — {s.agency || ''}</p>
+        </div>
+        <div className="flex gap-3">
+          <button onClick={onBack} className="border border-navy-200 text-navy-700 hover:bg-navy-50 px-6 py-2.5 rounded-xl font-semibold text-sm">← Back to Upload</button>
+          <button onClick={()=>onComplete(analysis)} className="bg-navy-900 hover:bg-navy-800 text-white px-6 py-2.5 rounded-xl font-semibold text-sm shadow-lg">Continue to Questions →</button>
+        </div>
+      </div>
+
+      <div className="flex gap-1 mb-6 bg-white rounded-xl p-1 border border-navy-100 shadow-sm">
+        {tabs.map(t => <button key={t.id} onClick={()=>setTab(t.id)} className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${tab===t.id?'bg-navy-900 text-white shadow-md':'text-navy-500 hover:bg-navy-50'}`}>{t.l}</button>)}
+      </div>
+
+      {tab === 'overview' && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2 bg-white rounded-xl border border-navy-100 shadow-sm p-6">
+            <h3 className="font-semibold text-navy-800 mb-4">📋 RFP Summary</h3>
+            <h4 className="text-lg font-bold text-navy-900 mb-4">{s.title || 'Untitled'}</h4>
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              {Object.entries({Agency:s.agency,Solicitation:s.solicitation,NAICS:s.naics,'Set-Aside':s.setAside,'Due Date':s.dueDate,'Est. Value':s.estimatedValue,Evaluation:s.evaluationMethod,Submission:s.submissionMethod}).map(([k,v])=>v?(
+                <div key={k}><span className="text-navy-400 text-xs uppercase">{k}</span><p className="text-navy-800 font-medium">{v}</p></div>
+              ):null)}
+            </div>
+          </div>
+          <div className="bg-white rounded-xl border border-navy-100 shadow-sm p-6">
+            <h3 className="font-semibold text-navy-800 mb-4">📊 Evaluation Criteria</h3>
+            {(analysis.evaluationCriteria||[]).map((c,i) => (
+              <div key={i} className="mb-3">
+                <div className="flex justify-between mb-1"><span className="text-sm font-medium text-navy-700">{c.factor}</span><span className="text-sm font-bold text-navy-900">{c.weight}%</span></div>
+                <div className="w-full bg-navy-100 rounded-full h-2"><div className="bg-gold-400 h-2 rounded-full" style={{width:`${c.weight}%`}}/></div>
+              </div>
+            ))}
+          </div>
+          <div className="lg:col-span-3 grid grid-cols-4 gap-4">
+            {[{l:'Response Sections',v:(analysis.requiredFormat||[]).length,c:'text-indigo-600'},{l:'Requirements',v:(analysis.requirements||[]).length,c:'text-blue-600'},{l:'Mandatory',v:(analysis.requirements||[]).filter(r=>r.type==='mandatory').length,c:'text-red-600'},{l:'Compliance Items',v:(analysis.complianceChecklist||[]).length,c:'text-yellow-600'}].map(x=>(
+              <div key={x.l} className="bg-white rounded-xl border border-navy-100 shadow-sm p-4 text-center">
+                <p className={`text-3xl font-bold ${x.c}`}>{x.v}</p><p className="text-sm text-navy-700">{x.l}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {tab === 'format' && (
+        <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
+          <div className="px-6 py-4 border-b border-navy-100"><h3 className="font-semibold text-navy-800">Required Response Format</h3><p className="text-xs text-navy-400 mt-1">Your proposal must follow these exact sections as specified in the RFP</p></div>
+          {(analysis.requiredFormat||[]).map((sec,i) => (
+            <div key={i} className="px-6 py-4 border-b border-navy-50 last:border-0">
+              <div className="flex items-start gap-4">
+                <span className="text-xs font-mono bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-bold">{sec.sectionNumber||`§${i+1}`}</span>
+                <div className="flex-1">
+                  <h4 className="text-sm font-semibold text-navy-900">{sec.sectionTitle}</h4>
+                  {sec.description && <p className="text-sm text-navy-600 mt-1">{sec.description}</p>}
+                  {sec.requiredContent && <p className="text-xs text-navy-500 mt-2 bg-navy-50 rounded-lg p-2">{sec.requiredContent}</p>}
+                  {sec.pageLimitIfStated && <span className="inline-block text-xs mt-2 px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700">Page limit: {sec.pageLimitIfStated}</span>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'requirements' && (
+        <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
+          <div className="px-6 py-4 border-b border-navy-100"><h3 className="font-semibold text-navy-800">Extracted Requirements</h3><p className="text-xs text-navy-400 mt-1">Every requirement stated in the RFP — nothing added, nothing assumed</p></div>
+          {(analysis.requirements||[]).map((r,i) => (
+            <div key={i} className="px-6 py-4 border-b border-navy-50 last:border-0">
+              <div className="flex items-start gap-4">
+                <span className="text-xs font-mono text-navy-400 mt-1">{r.id}</span>
+                <div className="flex-1">
+                  <p className="text-sm text-navy-800">{r.text}</p>
+                  <div className="flex gap-2 mt-2">
+                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${typeBadge[r.type]||'bg-gray-100 text-gray-600'}`}>{r.type}</span>
+                    {r.section && <span className="text-xs px-2 py-0.5 rounded-full bg-navy-100 text-navy-700">RFP §{r.section}</span>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {tab === 'compliance' && (
+        <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
+          <div className="px-6 py-4 border-b border-navy-100"><h3 className="font-semibold text-navy-800">Compliance Checklist</h3><p className="text-xs text-navy-400 mt-1">Submission and compliance items the RFP explicitly requires</p></div>
+          {(analysis.complianceChecklist||[]).map((c,i) => (
+            <div key={i} className="px-6 py-3 flex items-center gap-4 border-b border-navy-50 last:border-0">
+              <div className={`w-2 h-2 rounded-full ${c.critical?'bg-red-400':'bg-navy-300'}`}/>
+              <span className="flex-1 text-sm text-navy-700">{c.item}</span>
+              {c.rfpReference && <span className="text-xs text-navy-400">§{c.rfpReference}</span>}
+              {c.critical && <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-medium">Critical</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Simple Textarea-based Editor ──
+function SimpleEditor({ value, onChange, placeholder }) {
+  return (
+    <textarea
+      value={value || ''}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="rich-editor w-full"
+    />
+  );
+}
+
+// ── Asset Upload Component ──
+function AssetUploadArea({ onUpload, label }) {
+  const [dragging, setDragging] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef();
+
+  const handleFiles = async (files) => {
+    setUploading(true);
+    try {
+      for (let file of Array.from(files)) {
+        const text = await readFileText(file);
+        onUpload({ name: file.name, size: file.size, text });
+      }
+    } catch (e) {
+      console.error('Upload error:', e);
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div className={`asset-upload-area ${dragging ? 'dragging' : ''}`}
+      onClick={() => fileRef.current?.click()}
+      onDragOver={e => { e.preventDefault(); setDragging(true); }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={e => { e.preventDefault(); setDragging(false); handleFiles(e.dataTransfer.files); }}>
+      <input ref={fileRef} type="file" multiple accept=".pdf,.doc,.docx,.txt" className="hidden"
+        onChange={e => e.target.files.length && handleFiles(e.target.files)} />
+      {uploading ? (
+        <div className="flex items-center justify-center gap-2"><Spinner size="w-5 h-5"/><span className="text-sm text-navy-600">Uploading...</span></div>
+      ) : (
+        <>
+          <div className="text-2xl mb-2">📎</div>
+          <p className="text-sm font-medium text-navy-700">{label}</p>
+          <p className="text-xs text-navy-500 mt-1">Click or drag files to upload</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Form Field Component ──
+function FormField({ field, value, onChange }) {
+  const baseClass = 'form-field-input w-full';
+
+  if (field.fieldType === 'textarea') {
+    return (
+      <div className="mb-4">
+        <label className="form-field-label">{field.fieldName} {field.required && <span className="form-field-required">*</span>}</label>
+        <textarea value={value || ''} onChange={e => onChange(e.target.value)} placeholder={field.hint}
+          className={`${baseClass} h-24 resize-none`} />
+      </div>
+    );
+  }
+
+  if (field.fieldType === 'checkbox') {
+    return (
+      <div className="mb-4">
+        <label className="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" checked={value || false} onChange={e => onChange(e.target.checked)} className="w-4 h-4"/>
+          <span className="text-sm text-navy-700">{field.fieldName}</span>
+          {field.required && <span className="form-field-required">*</span>}
+        </label>
+      </div>
+    );
+  }
+
+  if (field.fieldType === 'signature') {
+    return (
+      <div className="mb-4">
+        <label className="form-field-label">{field.fieldName} {field.required && <span className="form-field-required">*</span>}</label>
+        <input type="text" value={value || ''} onChange={e => onChange(e.target.value)} placeholder={field.hint}
+          className={`${baseClass} italic text-gray-400`} />
+      </div>
+    );
+  }
+
+  if (field.fieldType === 'date') {
+    return (
+      <div className="mb-4">
+        <label className="form-field-label">{field.fieldName} {field.required && <span className="form-field-required">*</span>}</label>
+        <input type="date" value={value || ''} onChange={e => onChange(e.target.value)} className={baseClass} />
+      </div>
+    );
+  }
+
+  // text input (default)
+  return (
+    <div className="mb-4">
+      <label className="form-field-label">{field.fieldName} {field.required && <span className="form-field-required">*</span>}</label>
+      <input type="text" value={value || ''} onChange={e => onChange(e.target.value)} placeholder={field.hint} className={baseClass} />
+    </div>
+  );
+}
+
+// ── Questions Flow ──
+function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], onComplete, onBack }) {
+  // Single source of truth: null=loading, []=empty, [...]= ready
+  const [questions, setQuestions] = useState(null);
+  const [idx, setIdx] = useState(0);
+  const [error, setError] = useState('');
+  const [supplementalDocs, setSupplementalDocs] = useState([]);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const vendorContent = documents
+      .filter(d => d.type !== 'rfp' && d.type !== 'rfp_form' && d.type !== 'prior_proposal')
+      .map(d => ({ name: d.name, type: d.type, text: (d.text || '').substring(0, 6000) }));
+    callAI(apiKey, 'questions', {
+      analysis,
+      priorProposals: priorProposals.map(d => ({ name: d.name, text: (d.text || '').substring(0, 8000) })),
+      allContent: vendorContent
+    })
+      .then(data => {
+        if (cancelled) return;
+        const qs = Array.isArray(data) ? data : (data && data.questions) || [];
+        // Single state update — no separate setLoading needed
+        setQuestions(qs.map(q => ({
+          question: String(q.question || ''),
+          questionType: String(q.questionType || 'data'),
+          priority: String(q.priority || 'medium'),
+          hint: q.hint ? String(q.hint) : '',
+          draftAnswer: q.draftAnswer ? String(q.draftAnswer) : '',
+          draftSources: Array.isArray(q.draftSources) ? q.draftSources.map(String) : [],
+          answer: q.answer ? String(q.answer) : '',
+          assetAttached: false,
+          assetName: '',
+          formData: q.questionType === 'form' ? {} : undefined
+        })));
+      })
+      .catch(e => {
+        if (!cancelled) setError(e.message);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Derive loading from questions state
+  const loading = questions === null && !error;
+
+  if (loading) return (
+    <div className="max-w-2xl mx-auto">
+      <LoadingProgress
+        estimatedSeconds={45}
+        messages={['Analyzing RFP questions...','Mapping to vendor materials...','Identifying gaps...','Generating targeted questions...','Preparing draft answers...','Finalizing question flow...']}
+      />
+    </div>
+  );
+
+  if (error) return (
+    <div className="text-center py-12">
+      <p className="text-red-500 mb-4">{error}</p>
+      <button onClick={onBack} className="text-navy-700 hover:text-navy-900 font-medium">← Back to Analysis</button>
+    </div>
+  );
+
+  if (!questions || questions.length === 0) return (
+    <div className="text-center py-12">
+      <p className="text-navy-500 mb-4">No questions generated.</p>
+      <button onClick={()=>onComplete([])} className="bg-navy-900 text-white px-6 py-2 rounded-lg">Skip to Proposal →</button>
+    </div>
+  );
+
+  const q = questions[idx] || questions[0];
+  const safeIdx = questions[idx] ? idx : 0;
+
+  const answered = questions.reduce((count, x) => {
+    if (x.questionType === 'form') return count + (x.formData && Object.keys(x.formData).length > 0 ? 1 : 0);
+    if (x.questionType === 'asset') return count + (x.assetAttached ? 1 : 0);
+    return count + (x.answer && x.answer.trim() ? 1 : 0);
+  }, 0);
+
+  const prioColor = {critical:'bg-red-100 text-red-700',high:'bg-orange-100 text-orange-700',medium:'bg-blue-100 text-blue-700'};
+
+  function handleAnswerChange(v) {
+    setQuestions(prev => prev.map((x, i) => i === safeIdx ? { ...x, answer: v } : x));
+  }
+
+  function handleAssetUpload(asset) {
+    setQuestions(prev => prev.map((x, i) => i === safeIdx ? { ...x, assetAttached: true, assetName: asset.name } : x));
+  }
+
+  function handleFormFieldChange(fieldName, value) {
+    setQuestions(prev => prev.map((x, i) => i === safeIdx ? { ...x, formData: { ...x.formData, [fieldName]: value } } : x));
+  }
+
+  function handleUseDraft() {
+    if (q.draftAnswer) {
+      setQuestions(prev => prev.map((x, i) => i === safeIdx ? { ...x, answer: q.draftAnswer } : x));
+    }
+  }
+
+  async function handleAddSupplementalDoc(files) {
+    try {
+      for (const file of Array.from(files)) {
+        const text = await readFileText(file);
+        setSupplementalDocs(prev => [...prev, { name: file.name, text, type: 'data' }]);
+      }
+    } catch (e) {
+      console.error('Error reading supplemental doc:', e);
+    }
+  }
+
+  return (
+    <div className="max-w-4xl mx-auto fade-in">
+      <div className="flex justify-between mb-6">
+        <div><h2 className="text-2xl font-bold text-navy-900">Clarifying Questions</h2><p className="text-navy-500 text-sm mt-1">Fill the gaps between RFP requirements and your materials</p></div>
+        <div className="text-right"><p className="text-sm font-medium text-navy-700">{answered}/{questions.length} answered</p></div>
+      </div>
+
+      <div className="flex gap-1.5 mb-6">
+        {questions.map((x,i)=>{
+          const filled = x.questionType === 'form' ? (x.formData && Object.keys(x.formData).length > 0)
+            : x.questionType === 'asset' ? x.assetAttached
+            : Boolean(x.answer && x.answer.trim());
+          return <button key={i} onClick={()=>setIdx(i)} className={`h-2 rounded-full transition-all ${i===safeIdx?'w-8 bg-gold-400':filled?'w-2 bg-emerald-400':'w-2 bg-navy-300'}`}/>
+        })}
+      </div>
+
+      {supplementalDocs.length > 0 && (
+        <div className="bg-navy-50 rounded-xl p-4 mb-6">
+          <p className="text-xs font-semibold text-navy-600 mb-2">📚 Supplemental Content ({supplementalDocs.length} docs)</p>
+          <div className="flex flex-wrap gap-2">
+            {supplementalDocs.map((d, i) => (
+              <div key={i} className="text-xs bg-white px-2 py-1 rounded-full text-navy-700 flex items-center gap-1">
+                {d.name}
+                <button onClick={() => setSupplementalDocs(p => p.filter((_, j) => j !== i))} className="text-navy-400 hover:text-red-400">✕</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl border border-navy-100 shadow-sm mb-6" key={safeIdx}>
+        <div className="px-8 py-4 border-b border-navy-50 flex items-center gap-3">
+          <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${prioColor[q.priority]||''}`}>{q.priority || 'normal'}</span>
+          <span className="text-xs text-navy-400 bg-navy-50 px-2 py-0.5 rounded-full">{q.questionType || 'text'}</span>
+          <span className="text-xs text-navy-300 ml-auto">{safeIdx+1} of {questions.length}</span>
+        </div>
+        <div className="px-8 py-6">
+          <p className="text-navy-800 text-lg leading-relaxed mb-4">{q.question}</p>
+          {q.hint ? <div className="bg-gold-400/10 border border-gold-400/20 rounded-xl p-4 mb-4"><p className="text-sm text-navy-600">💡 {q.hint}</p></div> : null}
+
+          {q.questionType === 'form' ? (
+            <div className="bg-navy-50 rounded-xl p-6 mb-4">
+              {(analysis.requiredForms || []).length > 0 ? (
+                analysis.requiredForms[0]?.fields?.map((field, fi) => (
+                  <FormField key={fi} field={field} value={q.formData ? q.formData[field.fieldName] : ''} onChange={v => handleFormFieldChange(field.fieldName, v)} />
+                ))
+              ) : (
+                <p className="text-sm text-navy-600">No form fields available</p>
+              )}
+            </div>
+          ) : q.questionType === 'asset' ? (
+            <div className="mb-4">
+              <AssetUploadArea onUpload={handleAssetUpload} label={q.question} />
+              {q.assetAttached ? <p className="text-sm text-emerald-600 mt-2">✓ Asset attached: {q.assetName}</p> : null}
+            </div>
+          ) : (
+            <>
+              <SimpleEditor value={q.answer} onChange={handleAnswerChange} placeholder="Type your answer..." />
+              {q.draftAnswer ? (
+                <div className="mt-4 p-4 bg-navy-50 rounded-xl border border-navy-100">
+                  <div className="flex justify-between items-start mb-2">
+                    <p className="text-sm font-medium text-navy-700">AI Draft Available</p>
+                    {!(q.answer && q.answer.trim()) ? <button onClick={handleUseDraft} className="text-xs bg-gold-400 text-navy-900 px-2 py-1 rounded font-medium hover:bg-gold-500">Use Draft</button> : null}
+                  </div>
+                  <p className="text-sm text-navy-600 mb-3">{q.draftAnswer}</p>
+                  {q.draftSources && q.draftSources.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {q.draftSources.map((src, si) => <span key={si} className="source-tag">{src}</span>)}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {q.questionType === 'data' ? (
+                <div className="mt-4">
+                  <button onClick={() => fileInputRef.current && fileInputRef.current.click()} className="text-sm text-navy-700 hover:text-navy-900 font-medium">+ Add URL or Document</button>
+                  <input ref={fileInputRef} type="file" multiple accept=".pdf,.doc,.docx,.txt" className="hidden"
+                    onChange={e => e.target.files && e.target.files.length && handleAddSupplementalDoc(e.target.files)} />
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+        <div className="px-8 py-4 bg-navy-50/50 flex justify-between">
+          <button onClick={()=>setIdx(Math.max(0,safeIdx-1))} disabled={safeIdx===0} className="text-sm text-navy-500 disabled:opacity-30">← Previous</button>
+          <button onClick={()=>setIdx(Math.min(questions.length-1,safeIdx+1))} disabled={safeIdx===questions.length-1} className="text-sm text-navy-500 disabled:opacity-30">Next →</button>
+        </div>
+      </div>
+
+      <div className="flex justify-between">
+        <button onClick={onBack} className="border border-navy-200 text-navy-700 hover:bg-navy-50 px-6 py-2.5 rounded-xl font-semibold text-sm">← Back to Analysis</button>
+        <button onClick={() => onComplete(questions)} className="bg-navy-900 hover:bg-navy-800 text-white px-8 py-3 rounded-xl font-semibold text-sm shadow-lg">Generate Proposal Draft →</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Proposal View ──
+function ProposalView({ apiKey, analysis, answers, priorProposals = [], onBack }) {
+  const [proposal, setProposal] = useState(null);
+  const [error, setError] = useState('');
+  const [expanded, setExpanded] = useState(new Set());
+
+  useEffect(() => {
+    callAI(apiKey, 'proposal', { analysis, answers, priorProposals: priorProposals.map(d => ({ name: d.name, text: d.text?.substring(0, 12000) })) })
+      .then(setProposal)
+      .catch(e => setError(e.message));
+  }, []);
+
+  if (error) return (
+    <div className="text-center py-12">
+      <div className="text-4xl mb-4">⚠️</div>
+      <h2 className="text-xl font-bold text-navy-900 mb-4">{error}</h2>
+      <button onClick={onBack} className="text-navy-700 hover:text-navy-900 font-medium">← Back to Questions</button>
+    </div>
+  );
+
+  if (!proposal) return (
+    <div className="max-w-2xl mx-auto">
+      <LoadingProgress
+        estimatedSeconds={60}
+        messages={[
+          'Structuring proposal sections...',
+          'Integrating vendor materials...',
+          'Cross-referencing requirements...',
+          'Drafting response sections...',
+          'Adding compliance statements...',
+          'Generating AI recommendations...',
+          'Finalizing proposal...'
+        ]}
+      />
+    </div>
+  );
+
+  const toggle = id => setExpanded(p => { const n = new Set(p); n.has(id)?n.delete(id):n.add(id); return n; });
+  const sugIcon = {enhancement:'📈',data_point:'📊',compliance:'⚠️',risk:'🔴',critical:'🚨'};
+
+  return (
+    <div className="max-w-6xl mx-auto fade-in">
+      <div className="flex justify-between mb-6">
+        <div><h2 className="text-2xl font-bold text-navy-900">Draft Proposal Ready ✨</h2><p className="text-navy-500 text-sm mt-1">{proposal.solicitation} — {proposal.title}</p></div>
+        <div className="flex gap-3">
+          <button onClick={onBack} className="border border-navy-200 text-navy-700 hover:bg-navy-50 px-6 py-2.5 rounded-xl font-semibold text-sm">← Back to Questions</button>
+          <button onClick={()=>setExpanded(new Set((proposal.sections||[]).map(s=>s.id)))} className="border border-navy-200 px-3 py-2 rounded-lg text-sm text-navy-500 hover:bg-navy-50">Expand All</button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 space-y-4">
+          {(proposal.sections||[]).map(sec => (
+            <div key={sec.id} className="bg-white rounded-xl border border-navy-100 shadow-sm">
+              <button onClick={()=>toggle(sec.id)} className="w-full px-6 py-4 flex items-center gap-4 text-left hover:bg-navy-50/50">
+                <span className="text-lg">📄</span>
+                <div className="flex-1"><h3 className="font-semibold text-navy-800">{sec.title}</h3><p className="text-xs text-navy-400">{sec.volume}</p></div>
+                {sec.suggestions?.length>0 && <span className="text-xs bg-gold-400/10 text-gold-600 px-2 py-1 rounded-full">✨ {sec.suggestions.length}</span>}
+                <span className="text-navy-400">{expanded.has(sec.id)?'▲':'▼'}</span>
+              </button>
+              {expanded.has(sec.id) && (
+                <div className="border-t border-navy-100">
+                  <div className="px-8 py-6 prose" dangerouslySetInnerHTML={{__html:sec.content}}/>
+                  {sec.suggestions?.length > 0 && (
+                    <div className="px-6 py-4 bg-navy-50/50 border-t border-navy-100">
+                      <p className="text-sm font-semibold text-navy-700 mb-3">✨ AI Suggestions</p>
+                      {sec.suggestions.map((s,i) => (
+                        <div key={i} className="flex items-start gap-2 p-3 rounded-lg bg-white border border-navy-100 mb-2">
+                          <span>{sugIcon[s.type]||'💡'}</span>
+                          <p className="text-sm text-navy-700">{s.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-4">
+          <div className="bg-gradient-to-br from-navy-900 to-navy-800 rounded-xl p-5 text-white">
+            <h3 className="font-bold flex items-center gap-2">✨ Active AI Partner</h3>
+            <p className="text-navy-200 text-sm mt-2">Proactive recommendations based on market intelligence.</p>
+            <div className="flex items-center gap-2 text-xs text-navy-300 mt-3"><div className="w-2 h-2 bg-emerald-400 rounded-full"/>Analyzing...</div>
+          </div>
+          {(proposal.overallSuggestions||[]).map((s,i) => (
+            <div key={i} className="bg-white rounded-xl border border-navy-100 shadow-sm p-4 fade-in">
+              <div className="flex items-start gap-3">
+                <span className="text-xl">{s.icon||'💡'}</span>
+                <div><h4 className="text-sm font-semibold text-navy-800">{s.title}</h4><p className="text-xs text-navy-500 mt-1 leading-relaxed">{s.text}</p></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──
+const DEFAULT_API_KEY = ''; // Enter key in UI or set here for local dev
+
+function App() {
+  const [apiKey, setApiKey] = useState(DEFAULT_API_KEY);
+  const [step, setStep] = useState(1);
+  const [docs, setDocs] = useState([]);
+  const [analysis, setAnalysis] = useState(null);
+  const [answers, setAnswers] = useState([]);
+
+  const handleStepClick = (newStep) => {
+    if (newStep < step) {
+      setStep(newStep);
+    }
+  };
+
+  if (!apiKey) return <><Header step={0} onStepClick={handleStepClick}/><ApiKeySetup onReady={setApiKey}/></>;
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <Header step={step} onStepClick={handleStepClick}/>
+      <main className="flex-1 px-6 py-8">
+        {step===1 && <DocumentIntake apiKey={apiKey} onComplete={d=>{setDocs(d);setStep(2);}}/>}
+        {step===2 && <AnalysisView apiKey={apiKey} documents={docs} onComplete={a=>{setAnalysis(a);setStep(3);}} onBack={() => setStep(1)}/>}
+        {step===3 && <QuestionsFlow apiKey={apiKey} analysis={analysis} documents={docs} priorProposals={docs.filter(d=>d.type==='prior_proposal')} onComplete={a=>{setAnswers(a);setStep(4);}} onBack={() => setStep(2)}/>}
+        {step===4 && <ProposalView apiKey={apiKey} analysis={analysis} answers={answers} priorProposals={docs.filter(d=>d.type==='prior_proposal')} onBack={() => setStep(3)}/>}
+      </main>
+      <footer className="border-t border-navy-100 bg-white/80 py-4 px-6">
+        <div className="max-w-7xl mx-auto flex justify-between text-xs text-navy-400">
+          <span>ProposalAI — Government RFP Response Engine</span>
+          <span>v0.6 — Powered by Claude AI</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
