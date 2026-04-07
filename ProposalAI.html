@@ -61,6 +61,7 @@ body { font-family: 'Inter', -apple-system, sans-serif; }
 const { useState, useEffect, useCallback, useRef } = React;
 
 const EDGE_FN = 'https://fgbehzxrkbqiqrzcwxph.supabase.co/functions/v1/rfp-ai';
+const VAULT_STORAGE_KEY = 'proposalai_vault_id';
 
 // ── API Layer ──
 async function callAI(apiKey, action, payload) {
@@ -658,7 +659,7 @@ function FormField({ field, value, onChange }) {
 }
 
 // ── Questions Flow ──
-function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], initialQuestions, onComplete, onBack }) {
+function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], vaultSnippets = [], initialQuestions, onComplete, onBack }) {
   // Single source of truth: null=loading, []=empty, [...]= ready
   const [questions, setQuestions] = useState(initialQuestions || null);
   const [idx, setIdx] = useState(0);
@@ -676,7 +677,8 @@ function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], 
     callAI(apiKey, 'questions', {
       analysis,
       priorProposals: priorProposals.map(d => ({ name: d.name, text: (d.text || '').substring(0, 8000) })),
-      allContent: vendorContent
+      allContent: vendorContent,
+      vaultSnippets: vaultSnippets.slice(0, 15)
     })
       .then(data => {
         if (cancelled) return;
@@ -1183,6 +1185,157 @@ function copyProposalText(proposal) {
   navigator.clipboard.writeText(text).catch(() => {});
 }
 
+// ── Vault Setup / Identity ──
+function VaultSetup({ onReady }) {
+  const [vaultId, setVaultId] = useState('');
+  const [loading, setLoading] = useState(false);
+  const stored = typeof localStorage !== 'undefined' ? localStorage.getItem(VAULT_STORAGE_KEY) : null;
+
+  useEffect(() => {
+    if (stored) onReady(stored);
+  }, []);
+
+  if (stored) return null;
+
+  function handleCreate() {
+    const id = vaultId.trim() || ('vault_' + Date.now());
+    localStorage.setItem(VAULT_STORAGE_KEY, id);
+    onReady(id);
+  }
+
+  return (
+    <div className="max-w-lg mx-auto mt-12 fade-in">
+      <div className="bg-white rounded-2xl border border-navy-100 shadow-sm p-6">
+        <div className="text-center mb-4">
+          <div className="text-3xl mb-2">🔐</div>
+          <h3 className="text-lg font-bold text-navy-900">Your Vault</h3>
+          <p className="text-sm text-navy-500 mt-1">Your Vault stores company data, certs, and past proposals so every RFP gets faster.</p>
+        </div>
+        <label className="block text-sm font-medium text-navy-700 mb-1">Company / Vault Name</label>
+        <input type="text" value={vaultId} onChange={e => setVaultId(e.target.value)} placeholder="e.g., acme-consulting"
+          className="w-full border border-navy-200 rounded-xl px-4 py-3 text-sm mb-3 focus:outline-none" style={{boxShadow:'none'}}
+          onKeyDown={e => e.key === 'Enter' && handleCreate()} />
+        <button onClick={handleCreate} className="w-full bg-navy-900 hover:bg-navy-800 text-white py-3 rounded-xl font-semibold text-sm">
+          {vaultId.trim() ? 'Open Vault' : 'Create New Vault'}
+        </button>
+        <button onClick={() => onReady('')} className="w-full text-navy-400 hover:text-navy-600 text-sm mt-2 py-2">
+          Skip — use without Vault
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Vault Status Bar ──
+function VaultBar({ vault, onManage }) {
+  if (!vault || !vault.id) return null;
+  return (
+    <div className="bg-navy-50 border-b border-navy-100 px-6 py-2">
+      <div className="max-w-7xl mx-auto flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <span className="text-sm">🔐</span>
+          <span className="text-xs font-medium text-navy-700">Vault: {vault.id}</span>
+          <span className="text-xs text-navy-400">{vault.docCount} docs · {vault.snippetCount} snippets · {vault.rfpCount} past RFPs</span>
+        </div>
+        <button onClick={onManage} className="text-xs text-navy-500 hover:text-navy-800 font-medium">Manage Vault</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Save to Vault Prompt (shown after proposal completion) ──
+function SaveToVaultPrompt({ apiKey, vaultId, documents, analysis, questions, proposal, onSaved, onSkip }) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [selectedDocs, setSelectedDocs] = useState(
+    () => new Set(documents.filter(d => d.type !== 'rfp' && d.type !== 'rfp_form').map((_, i) => i))
+  );
+
+  const vendorDocs = documents.filter(d => d.type !== 'rfp' && d.type !== 'rfp_form');
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const docsToSave = vendorDocs.filter((_, i) => selectedDocs.has(i));
+      // Save docs and RFP history in parallel
+      const promises = [];
+      if (docsToSave.length > 0) {
+        promises.push(callAI(apiKey, 'vault_save_docs', { vault_id: vaultId, documents: docsToSave }));
+      }
+      promises.push(callAI(apiKey, 'vault_save_rfp', {
+        vault_id: vaultId,
+        analysis,
+        questions,
+        proposal
+      }));
+      // Extract snippets from answered questions
+      const answeredQs = (questions || []).filter(q => q.answer && q.answer.trim() && q.questionType === 'data');
+      if (answeredQs.length > 0) {
+        const snippets = answeredQs.map(q => ({
+          category: q.category || 'custom',
+          title: q.question.substring(0, 100),
+          content: q.answer,
+          source: (analysis.rfpSummary && analysis.rfpSummary.title) || 'RFP Response',
+          kept: true
+        }));
+        promises.push(callAI(apiKey, 'vault_save_snippets', { vault_id: vaultId, snippets }));
+      }
+      await Promise.all(promises);
+      setSaved(true);
+      setTimeout(() => onSaved(), 1500);
+    } catch (e) {
+      console.error('Vault save error:', e);
+      setSaving(false);
+    }
+  }
+
+  function toggleDoc(i) {
+    setSelectedDocs(prev => {
+      const n = new Set(prev);
+      n.has(i) ? n.delete(i) : n.add(i);
+      return n;
+    });
+  }
+
+  if (saved) return (
+    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 mb-6 fade-in text-center">
+      <p className="text-sm font-medium text-emerald-800">✅ Saved to Vault! Your next RFP will be even faster.</p>
+    </div>
+  );
+
+  return (
+    <div className="bg-gold-400/10 border border-gold-400/30 rounded-xl p-5 mb-6 fade-in">
+      <div className="flex items-start gap-3 mb-3">
+        <span className="text-2xl">🔐</span>
+        <div>
+          <h4 className="font-semibold text-navy-900">Save to Your Vault?</h4>
+          <p className="text-sm text-navy-600 mt-1">Store your documents, answers, and this proposal so future RFPs auto-populate with your data.</p>
+        </div>
+      </div>
+      {vendorDocs.length > 0 ? (
+        <div className="mb-3">
+          <p className="text-xs font-semibold text-navy-600 mb-2">Documents to save:</p>
+          <div className="space-y-1">
+            {vendorDocs.map((d, i) => (
+              <label key={i} className="flex items-center gap-2 text-sm text-navy-700 cursor-pointer">
+                <input type="checkbox" checked={selectedDocs.has(i)} onChange={() => toggleDoc(i)} className="w-3.5 h-3.5" />
+                <span>{d.name}</span>
+                <span className="text-xs text-navy-400">({d.type})</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      <div className="flex gap-2">
+        <button onClick={handleSave} disabled={saving} className="bg-navy-900 hover:bg-navy-800 text-white px-5 py-2 rounded-lg text-sm font-medium disabled:opacity-50">
+          {saving ? 'Saving...' : 'Save to Vault'}
+        </button>
+        <button onClick={onSkip} className="text-navy-500 hover:text-navy-700 text-sm font-medium px-4 py-2">Skip</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main App ──
 const DEFAULT_API_KEY = ''; // Enter key in UI or set here for local dev
 
@@ -1194,39 +1347,93 @@ function App() {
   const [analysis, setAnalysis] = useState(null);
   const [questionsData, setQuestionsData] = useState(null);
   const [proposalData, setProposalData] = useState(null);
+  // Vault state
+  const [vaultId, setVaultId] = useState(null); // null = not initialized, '' = skipped
+  const [vault, setVault] = useState({ id: '', docCount: 0, snippetCount: 0, rfpCount: 0, documents: [], snippets: [] });
+  const [vaultSaved, setVaultSaved] = useState(false);
 
   function goToStep(n) {
     setStep(n);
     setMaxStep(prev => Math.max(prev, n));
   }
 
-  // Header nav: go to any visited step (no data clearing — just view what's there)
   function handleStepClick(newStep) {
     if (newStep <= maxStep && newStep !== step) setStep(newStep);
   }
 
-  // "Generate Proposal Draft" button: always regenerate since answers may have changed
   function handleQuestionsComplete(qs) {
     setQuestionsData(qs);
-    setProposalData(null); // Force regeneration with updated answers
+    setProposalData(null);
+    setVaultSaved(false);
     goToStep(4);
   }
 
+  // Load vault when vaultId is set
+  useEffect(() => {
+    if (!vaultId || !apiKey) return;
+    callAI(apiKey, 'vault_load', { vault_id: vaultId })
+      .then(data => {
+        setVault({
+          id: vaultId,
+          docCount: (data.documents || []).length,
+          snippetCount: (data.snippets || []).length,
+          rfpCount: (data.rfpHistory || []).length,
+          documents: data.documents || [],
+          snippets: data.snippets || [],
+          rfpHistory: data.rfpHistory || [],
+          profile: data.profile,
+        });
+        // Load full text for vault docs so they can be sent to Q&A
+        if (data.documents && data.documents.length > 0) {
+          callAI(apiKey, 'vault_get_doc_texts', { vault_id: vaultId })
+            .then(texts => {
+              setVault(prev => ({ ...prev, documentTexts: texts || [] }));
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(e => console.error('Vault load error:', e));
+  }, [vaultId, apiKey]);
+
+  function handleVaultReady(id) {
+    setVaultId(id || '');
+  }
+
   if (!apiKey) return <><Header step={0} maxStep={0} onStepClick={handleStepClick}/><ApiKeySetup onReady={setApiKey}/></>;
+  if (vaultId === null) return <><Header step={0} maxStep={0} onStepClick={handleStepClick}/><VaultSetup onReady={handleVaultReady}/></>;
+
+  // Merge vault docs into vendor content for Q&A
+  const vaultVendorDocs = (vault.documentTexts || []).map(d => ({
+    name: '[Vault] ' + d.name,
+    type: d.doc_type,
+    text: d.full_text || ''
+  }));
 
   return (
     <div className="min-h-screen flex flex-col">
       <Header step={step} maxStep={maxStep} onStepClick={handleStepClick}/>
+      <VaultBar vault={vault} onManage={() => {}} />
       <main className="flex-1 px-6 py-8">
         {step===1 && <DocumentIntake apiKey={apiKey} onComplete={d=>{setDocs(d);goToStep(2);}}/>}
         {step===2 && <AnalysisView apiKey={apiKey} documents={docs} initialAnalysis={analysis} onComplete={a=>{setAnalysis(a);goToStep(3);}} onBack={() => setStep(1)}/>}
-        {step===3 && <QuestionsFlow apiKey={apiKey} analysis={analysis} documents={docs} priorProposals={docs.filter(d=>d.type==='prior_proposal')} initialQuestions={questionsData} onComplete={handleQuestionsComplete} onBack={() => setStep(2)}/>}
-        {step===4 && <ProposalView apiKey={apiKey} analysis={analysis} answers={questionsData||[]} priorProposals={docs.filter(d=>d.type==='prior_proposal')} initialProposal={proposalData} onProposalReady={setProposalData} onBack={() => setStep(3)}/>}
+        {step===3 && <QuestionsFlow apiKey={apiKey} analysis={analysis} documents={[...docs, ...vaultVendorDocs]} priorProposals={docs.filter(d=>d.type==='prior_proposal')} vaultSnippets={vault.snippets || []} initialQuestions={questionsData} onComplete={handleQuestionsComplete} onBack={() => setStep(2)}/>}
+        {step===4 && (
+          <>
+            {vaultId && !vaultSaved && proposalData ? (
+              <SaveToVaultPrompt
+                apiKey={apiKey} vaultId={vaultId} documents={docs}
+                analysis={analysis} questions={questionsData} proposal={proposalData}
+                onSaved={() => setVaultSaved(true)} onSkip={() => setVaultSaved(true)}
+              />
+            ) : null}
+            <ProposalView apiKey={apiKey} analysis={analysis} answers={questionsData||[]} priorProposals={docs.filter(d=>d.type==='prior_proposal')} initialProposal={proposalData} onProposalReady={setProposalData} onBack={() => setStep(3)}/>
+          </>
+        )}
       </main>
       <footer className="border-t border-navy-100 bg-white/80 py-4 px-6">
         <div className="max-w-7xl mx-auto flex justify-between text-xs text-navy-400">
           <span>ProposalAI — Government RFP Response Engine</span>
-          <span>v0.8 — Powered by Claude AI</span>
+          <span>v0.9 — Powered by Claude AI</span>
         </div>
       </footer>
     </div>
