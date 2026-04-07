@@ -12,6 +12,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>window.pdfjsLib && (pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js');</script>
 <script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
 tailwind.config = {
   theme: {
@@ -53,6 +54,31 @@ body { font-family: 'Inter', -apple-system, sans-serif; }
 .form-field-label { display: block; font-size: 0.875rem; font-weight: 500; color: #243b53; margin-bottom: 0.375rem; }
 .form-field-required { color: #dc2626; }
 .pulse-icon { animation: pulse-icon 2s ease-in-out infinite; }
+@media print {
+  /* Hide UI chrome */
+  header, footer, nav, .no-print,
+  [data-print="hide"] { display: none !important; }
+  /* Hide sidebar column */
+  .grid.grid-cols-1.lg\:grid-cols-3 > div:last-child { display: none !important; }
+  .lg\:col-span-2 { grid-column: 1 / -1 !important; }
+  /* Expand ALL collapsed sections — these use inline style display:none */
+  .print-section-body { display: block !important; }
+  /* Hide collapse arrows in print */
+  button .text-navy-400:last-child { display: none !important; }
+  /* Clean up for print */
+  body { background: white !important; }
+  .bg-gradient-to-br { background: white !important; }
+  .shadow-sm, .shadow-md, .shadow-lg { box-shadow: none !important; }
+  .rounded-xl, .rounded-2xl { border-radius: 0 !important; }
+  .border { border-color: #e5e7eb !important; }
+  .prose { max-width: 100% !important; }
+  /* Page breaks — avoid splitting sections */
+  .bg-white.rounded-xl { break-inside: avoid; page-break-inside: avoid; }
+  /* Vault bar */
+  .bg-navy-50.border-b { display: none !important; }
+  /* Add section button */
+  .border-dashed { display: none !important; }
+}
 </style>
 </head>
 <body class="bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen">
@@ -185,7 +211,7 @@ function LoadingProgress({ estimatedSeconds, messages, onComplete }) {
 
 // ── Header ──
 function Header({ step, maxStep, onStepClick }) {
-  const steps = [{n:1,l:'Upload'},{n:2,l:'Analysis'},{n:3,l:'Questions'},{n:4,l:'Proposal'}];
+  const steps = [{n:1,l:'Upload'},{n:2,l:'Analysis'},{n:3,l:'Questions'},{n:4,l:'Proposal'},{n:5,l:'Package'}];
   return (
     <header className="bg-navy-900 text-white shadow-lg">
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -208,7 +234,7 @@ function Header({ step, maxStep, onStepClick }) {
                   <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${visited && !isCurrent?'bg-emerald-400 text-navy-900':''}`}>{visited && !isCurrent?'✓':s.n}</span>
                   {s.l}
                 </button>
-                {i<3 && <div className={`w-8 h-0.5 mx-1 ${s.n < maxStep?'bg-emerald-400':'bg-navy-700'}`}/>}
+                {i<4 && <div className={`w-8 h-0.5 mx-1 ${s.n < maxStep?'bg-emerald-400':'bg-navy-700'}`}/>}
               </div>
             );
           })}
@@ -265,6 +291,7 @@ function DocumentIntake({ apiKey, initialDocs, onComplete, onDocsChange }) {
   const [error, setError] = useState('');
   const [urlInput, setUrlInput] = useState('');
   const [fetching, setFetching] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const fileRef = useRef();
   const types = {
     rfp:{l:'RFP Document',c:'bg-blue-100 text-blue-700'},
@@ -289,6 +316,7 @@ function DocumentIntake({ apiKey, initialDocs, onComplete, onDocsChange }) {
       const results = (Array.isArray(classified) ? classified : classified.documents || [classified]).map((c,i) => ({
         id: crypto.randomUUID(), name: fileData[i]?.name || c.name, size: fileData[i]?.size || 0,
         type: c.type || 'supporting', confidence: c.confidence || 0.8, text: fileData[i]?.text || '',
+        originalFile: fileData[i]?.file || null,
       }));
       setDocs(prev => [...prev, ...results]);
     } catch (e) { setError(e.message); }
@@ -332,7 +360,11 @@ function DocumentIntake({ apiKey, initialDocs, onComplete, onDocsChange }) {
       </div>
 
       <div onClick={()=>fileRef.current?.click()}
-        className="border-2 border-dashed border-navy-200 rounded-2xl p-12 text-center cursor-pointer hover:border-navy-300 hover:bg-navy-50/50 bg-white mb-6 transition-all">
+        onDragOver={e => { e.preventDefault(); e.stopPropagation(); setDragging(true); }}
+        onDragEnter={e => { e.preventDefault(); e.stopPropagation(); setDragging(true); }}
+        onDragLeave={e => { e.preventDefault(); e.stopPropagation(); setDragging(false); }}
+        onDrop={e => { e.preventDefault(); e.stopPropagation(); setDragging(false); if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files); }}
+        className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer mb-6 transition-all ${dragging ? 'border-gold-400 bg-gold-400/5 scale-[1.01]' : 'border-navy-200 hover:border-navy-300 hover:bg-navy-50/50 bg-white'}`}>
         <input ref={fileRef} type="file" multiple accept=".pdf,.doc,.docx,.txt,.csv,.xls,.xlsx" className="hidden"
           onChange={e => e.target.files.length && handleFiles(e.target.files)} />
         {classifying ? (
@@ -340,10 +372,15 @@ function DocumentIntake({ apiKey, initialDocs, onComplete, onDocsChange }) {
             <Spinner size="w-12 h-12"/>
             <p className="text-navy-700 font-medium">Classifying documents with AI...</p>
           </div>
+        ) : dragging ? (
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-16 h-16 bg-gold-400/20 rounded-2xl flex items-center justify-center text-2xl">+</div>
+            <p className="text-navy-700 font-semibold text-lg">Drop files here</p>
+          </div>
         ) : (
           <div className="flex flex-col items-center gap-3">
             <div className="w-16 h-16 bg-navy-100 rounded-2xl flex items-center justify-center text-2xl">📄</div>
-            <p className="text-navy-700 font-semibold text-lg">Click to upload documents</p>
+            <p className="text-navy-700 font-semibold text-lg">Drag & drop or click to upload</p>
             <p className="text-navy-400 text-sm">PDF, DOC, DOCX, TXT, XLS, XLSX</p>
           </div>
         )}
@@ -406,26 +443,41 @@ function AnalysisView({ apiKey, documents, initialAnalysis, onComplete, onBack }
   const [analysis, setAnalysis] = useState(initialAnalysis || null);
   const [error, setError] = useState('');
   const [tab, setTab] = useState('overview');
+  const [reanalyzing, setReanalyzing] = useState(false);
+
+  function runAnalysis(cancelled = { current: false }) {
+    const rfpDoc = documents.find(d => d.type === 'rfp' || d.type === 'rfp_form');
+    const priorDocs = documents.filter(d => d.type === 'prior_proposal');
+    const vendorDocs = documents.filter(d => d.type !== 'rfp' && d.type !== 'rfp_form' && d.type !== 'prior_proposal');
+    return callAI(apiKey, 'analyze', {
+      rfpText: rfpDoc?.text || '',
+      vendorTexts: vendorDocs.map(d => ({ name: d.name, type: d.type, text: d.text })),
+      priorProposals: priorDocs.map(d => ({ name: d.name, text: d.text })),
+    }).then(result => { if (!cancelled.current) setAnalysis(result); })
+      .catch(e => { if (!cancelled.current) setError(e.message); });
+  }
 
   useEffect(() => {
-    if (analysis !== null) return; // Already have data from previous visit
-    let cancelled = false;
-    const run = async () => {
-      try {
-        const rfpDoc = documents.find(d => d.type === 'rfp' || d.type === 'rfp_form');
-        const priorDocs = documents.filter(d => d.type === 'prior_proposal');
-        const vendorDocs = documents.filter(d => d.type !== 'rfp' && d.type !== 'rfp_form' && d.type !== 'prior_proposal');
-        const result = await callAI(apiKey, 'analyze', {
-          rfpText: rfpDoc?.text || '',
-          vendorTexts: vendorDocs.map(d => ({ name: d.name, type: d.type, text: d.text })),
-          priorProposals: priorDocs.map(d => ({ name: d.name, text: d.text })),
-        });
-        if (!cancelled) setAnalysis(result);
-      } catch (e) { if (!cancelled) setError(e.message); }
-    };
-    run();
-    return () => { cancelled = true; };
+    if (analysis !== null) return;
+    const cancelled = { current: false };
+    runAnalysis(cancelled);
+    return () => { cancelled.current = true; };
   }, []);
+
+  // Validation: check if analysis is missing key data
+  const analysisGaps = analysis ? [
+    ...(!(analysis.evaluationCriteria || []).length ? ['Evaluation criteria not detected'] : []),
+    ...(!(analysis.requirements || []).filter(r => r.type === 'mandatory').length ? ['No mandatory requirements found'] : []),
+    ...(!(analysis.requirements || []).filter(r => r.type === 'desirable').length ? ['No scored/desirable criteria found'] : []),
+    ...(!(analysis.scoringStructure || {}).phases?.length && !(analysis.scoringStructure || {}).scoringRubrics?.length ? ['Scoring rubrics not detected'] : []),
+  ] : [];
+
+  function handleReanalyze() {
+    setReanalyzing(true);
+    setAnalysis(null);
+    setError('');
+    runAnalysis().finally(() => setReanalyzing(false));
+  }
 
   if (error) return (
     <div className="max-w-2xl mx-auto text-center py-12 fade-in">
@@ -439,14 +491,15 @@ function AnalysisView({ apiKey, documents, initialAnalysis, onComplete, onBack }
   if (!analysis) return (
     <div className="max-w-2xl mx-auto">
       <LoadingProgress
-        estimatedSeconds={30}
+        estimatedSeconds={35}
         messages={[
-          'Parsing RFP requirements...',
-          'Extracting evaluation criteria...',
-          'Analyzing compliance items...',
+          'Pass 1: Extracting structure & requirements...',
+          'Pass 2: Analyzing scoring rubrics & evaluation...',
+          'Identifying mandatory vs. scored criteria...',
+          'Mapping compliance gates & thresholds...',
           'Cross-referencing with vendor materials...',
           'Building requirements map...',
-          'Preparing analysis summary...'
+          'Normalizing & validating results...'
         ]}
       />
     </div>
@@ -473,6 +526,22 @@ function AnalysisView({ apiKey, documents, initialAnalysis, onComplete, onBack }
         {tabs.map(t => <button key={t.id} onClick={()=>setTab(t.id)} className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-all ${tab===t.id?'bg-navy-900 text-white shadow-md':'text-navy-500 hover:bg-navy-50'}`}>{t.l}</button>)}
       </div>
 
+      {analysisGaps.length > 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-200 rounded-xl p-4 fade-in">
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-sm font-semibold text-amber-800">⚠️ Incomplete Analysis Detected</p>
+              <p className="text-xs text-amber-700 mt-1">{analysisGaps.join(' · ')}</p>
+              <p className="text-xs text-amber-600 mt-1">This can happen with complex or multi-document RFPs. Re-analyzing often fills the gaps.</p>
+            </div>
+            <button onClick={handleReanalyze} disabled={reanalyzing}
+              className="flex-shrink-0 ml-4 bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300 text-white px-4 py-2 rounded-lg text-sm font-medium">
+              {reanalyzing ? 'Re-analyzing...' : '🔄 Re-analyze'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {tab === 'overview' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2 bg-white rounded-xl border border-navy-100 shadow-sm p-6">
@@ -484,14 +553,17 @@ function AnalysisView({ apiKey, documents, initialAnalysis, onComplete, onBack }
               ):null)}
             </div>
           </div>
-          <div className="bg-white rounded-xl border border-navy-100 shadow-sm p-6">
-            <h3 className="font-semibold text-navy-800 mb-4">📊 Evaluation Criteria</h3>
-            {(analysis.evaluationCriteria||[]).map((c,i) => (
-              <div key={i} className="mb-3">
-                <div className="flex justify-between mb-1"><span className="text-sm font-medium text-navy-700">{c.factor}</span><span className="text-sm font-bold text-navy-900">{c.weight}%</span></div>
-                <div className="w-full bg-navy-100 rounded-full h-2"><div className="bg-gold-400 h-2 rounded-full" style={{width:`${c.weight}%`}}/></div>
-              </div>
-            ))}
+          <div className="space-y-4">
+            <div className="bg-white rounded-xl border border-navy-100 shadow-sm p-6">
+              <h3 className="font-semibold text-navy-800 mb-4">📊 Evaluation Criteria</h3>
+              {(analysis.evaluationCriteria||[]).map((c,i) => (
+                <div key={i} className="mb-3">
+                  <div className="flex justify-between mb-1"><span className="text-sm font-medium text-navy-700">{c.factor}</span><span className="text-sm font-bold text-navy-900">{c.weight}%</span></div>
+                  <div className="w-full bg-navy-100 rounded-full h-2"><div className="bg-gold-400 h-2 rounded-full" style={{width:`${c.weight}%`}}/></div>
+                </div>
+              ))}
+            </div>
+            <ScoreMaximizer analysis={analysis} />
           </div>
           <div className="lg:col-span-3 grid grid-cols-4 gap-4">
             {[{l:'Response Sections',v:(analysis.requiredFormat||[]).length,c:'text-indigo-600'},{l:'Requirements',v:(analysis.requirements||[]).length,c:'text-blue-600'},{l:'Mandatory',v:(analysis.requirements||[]).filter(r=>r.type==='mandatory').length,c:'text-red-600'},{l:'Compliance Items',v:(analysis.complianceChecklist||[]).length,c:'text-yellow-600'}].map(x=>(
@@ -823,11 +895,41 @@ function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], 
     }
   }
 
+  // Accept all AI suggestions in one click
+  function handleAcceptAll() {
+    setQuestions(prev => prev.map(x => {
+      const updated = { ...x };
+      // Accept draft answers for text/data questions
+      if (x.draftAnswer && (!x.answer || !x.answer.trim()) && x.questionType !== 'form' && x.questionType !== 'asset') {
+        updated.answer = x.draftAnswer;
+      }
+      // Confirm auto-matched assets
+      if (x.autoMatched && !x.assetAttached) {
+        updated.assetAttached = true;
+      }
+      return updated;
+    }));
+  }
+
+  // Count how many suggestions are available to accept
+  const pendingSuggestions = questions.reduce((count, x) => {
+    if (x.draftAnswer && (!x.answer || !x.answer.trim()) && x.questionType !== 'form' && x.questionType !== 'asset') count++;
+    if (x.autoMatched && !x.assetAttached) count++;
+    return count;
+  }, 0);
+
   return (
     <div className="max-w-4xl mx-auto fade-in">
-      <div className="flex justify-between mb-6">
+      <div className="flex justify-between items-start mb-6">
         <div><h2 className="text-2xl font-bold text-navy-900">Clarifying Questions</h2><p className="text-navy-500 text-sm mt-1">Fill the gaps between RFP requirements and your materials</p></div>
-        <div className="text-right"><p className="text-sm font-medium text-navy-700">{answered}/{questions.length} answered</p></div>
+        <div className="flex items-center gap-3">
+          {pendingSuggestions > 0 && (
+            <button onClick={handleAcceptAll} className="bg-gold-400 hover:bg-gold-500 text-navy-900 px-4 py-2 rounded-xl font-semibold text-sm shadow-sm transition-colors">
+              Accept All Suggestions ({pendingSuggestions})
+            </button>
+          )}
+          <div className="text-right"><p className="text-sm font-medium text-navy-700">{answered}/{questions.length} answered</p></div>
+        </div>
       </div>
 
       <div className="flex gap-1.5 mb-6">
@@ -866,17 +968,17 @@ function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], 
           {q.questionType === 'form' ? (
             <div className="mb-4">
               <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
-                <p className="text-sm text-amber-800 font-medium">📋 PDF Form Required</p>
-                <p className="text-xs text-amber-700 mt-1">This form should be completed in its original PDF format with text fields filled and signatures added. Upload the completed PDF as an asset below, or use the fields here to draft your responses.</p>
+                <p className="text-sm text-amber-800 font-medium">PDF Form Required</p>
+                <p className="text-xs text-amber-700 mt-1">This form must be completed in its original PDF format. Use the fields below to draft your responses, then fill them into the actual PDF before final submission.</p>
               </div>
               <div className="bg-navy-50 rounded-xl p-6">
-                {(analysis.requiredForms || []).length > 0 ? (
-                  analysis.requiredForms[0]?.fields?.map((field, fi) => (
-                    <FormField key={fi} field={field} value={q.formData ? q.formData[field.fieldName] : ''} onChange={v => handleFormFieldChange(field.fieldName, v)} />
-                  ))
-                ) : (
-                  <p className="text-sm text-navy-600">No form fields available</p>
-                )}
+                  {(analysis.requiredForms || []).length > 0 ? (
+                    analysis.requiredForms[0]?.fields?.map((field, fi) => (
+                      <FormField key={fi} field={field} value={q.formData ? q.formData[field.fieldName] : ''} onChange={v => handleFormFieldChange(field.fieldName, v)} />
+                    ))
+                  ) : (
+                    <p className="text-sm text-navy-600">No form fields available</p>
+                  )}
               </div>
             </div>
           ) : q.questionType === 'asset' ? (
@@ -902,7 +1004,9 @@ function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], 
             </div>
           ) : (
             <>
-              <SimpleEditor value={q.answer} onChange={handleAnswerChange} placeholder="Type your answer..." />
+              <textarea value={q.answer || ''} onChange={e => handleAnswerChange(e.target.value)} placeholder="Type your answer..."
+                className="w-full border border-navy-200 rounded-xl px-4 py-3 text-sm min-h-[120px] focus:outline-none resize-y"
+                style={{boxShadow: 'none', fontFamily: 'Inter, -apple-system, sans-serif'}} />
               {q.draftAnswer ? (
                 <div className="mt-4 p-4 bg-navy-50 rounded-xl border border-navy-100">
                   <div className="flex justify-between items-start mb-2">
@@ -979,8 +1083,7 @@ function SectionEditor({ section, onUpdate, onDelete, onMoveUp, onMoveDown, isFi
         </div>
       </div>
 
-      {expanded ? (
-        <div className="border-t border-navy-100">
+      <div className="border-t border-navy-100 print-section-body" style={{display: expanded ? 'block' : 'none'}}>
           {editing ? (
             <div className="px-6 py-4">
               <label className="block text-xs font-semibold text-navy-600 mb-1">Section Title</label>
@@ -988,7 +1091,7 @@ function SectionEditor({ section, onUpdate, onDelete, onMoveUp, onMoveDown, isFi
                 className="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none" style={{boxShadow: 'none'}} />
               <label className="block text-xs font-semibold text-navy-600 mb-1">Content</label>
               <RichTextEditor value={editContent} onChange={setEditContent} />
-              <div className="flex gap-2 mt-3">
+              <div className="flex gap-2 mt-3" data-print="hide">
                 <button onClick={saveEdits} className="bg-navy-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-800">Save</button>
                 <button onClick={cancelEdits} className="border border-navy-200 text-navy-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-50">Cancel</button>
                 <button onClick={onDelete} className="ml-auto text-red-500 hover:text-red-700 text-sm font-medium px-4 py-2">Delete Section</button>
@@ -997,13 +1100,13 @@ function SectionEditor({ section, onUpdate, onDelete, onMoveUp, onMoveDown, isFi
           ) : (
             <>
               <div className="px-8 py-6 prose" dangerouslySetInnerHTML={{__html: section.content}} />
-              <div className="px-6 py-3 border-t border-navy-50 flex gap-2">
+              <div className="px-6 py-3 border-t border-navy-50 flex gap-2" data-print="hide">
                 <button onClick={() => setEditing(true)} className="text-xs text-navy-500 hover:text-navy-800 font-medium px-3 py-1.5 rounded-lg hover:bg-navy-50">✏️ Edit Section</button>
               </div>
             </>
           )}
           {!editing && section.suggestions && section.suggestions.length > 0 ? (
-            <div className="px-6 py-4 bg-navy-50/50 border-t border-navy-100">
+            <div className="px-6 py-4 bg-navy-50/50 border-t border-navy-100" data-print="hide">
               <p className="text-sm font-semibold text-navy-700 mb-3">✨ AI Suggestions</p>
               {section.suggestions.map((s, i) => (
                 <div key={i} className="flex items-start gap-2 p-3 rounded-lg bg-white border border-navy-100 mb-2">
@@ -1014,13 +1117,12 @@ function SectionEditor({ section, onUpdate, onDelete, onMoveUp, onMoveDown, isFi
             </div>
           ) : null}
         </div>
-      ) : null}
     </div>
   );
 }
 
 // ── Proposal View ──
-function ProposalView({ apiKey, analysis, answers, priorProposals = [], initialProposal, onProposalReady, onBack }) {
+function ProposalView({ apiKey, analysis, answers, priorProposals = [], allDocuments = [], initialProposal, onProposalReady, onBack, onAssemble }) {
   const [proposal, setProposal] = useState(initialProposal || null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
@@ -1116,13 +1218,13 @@ function ProposalView({ apiKey, analysis, answers, priorProposals = [], initialP
           <p className="text-navy-500 text-sm mt-1">{proposal.solicitation} — {proposal.title}</p>
           <p className="text-xs text-navy-400 mt-1">{filledCount}/{sections.length} sections with content</p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2" data-print="hide">
           <button onClick={onBack} className="border border-navy-200 text-navy-700 hover:bg-navy-50 px-5 py-2.5 rounded-xl font-semibold text-sm">← Questions</button>
           <button onClick={handleCopy} className="border border-navy-200 text-navy-700 hover:bg-navy-50 px-5 py-2.5 rounded-xl font-semibold text-sm">
             {copied ? '✓ Copied!' : '📋 Copy All'}
           </button>
-          <button onClick={() => downloadAsWord(proposal, analysis, answers)} className="bg-navy-900 hover:bg-navy-800 text-white px-6 py-2.5 rounded-xl font-semibold text-sm shadow-lg flex items-center gap-2">
-            📥 Download .doc
+          <button onClick={onAssemble} className="bg-navy-900 hover:bg-navy-800 text-white px-6 py-2.5 rounded-xl font-semibold text-sm shadow-lg flex items-center gap-2">
+            Assemble Submission →
           </button>
         </div>
       </div>
@@ -1171,16 +1273,10 @@ function ProposalView({ apiKey, analysis, answers, priorProposals = [], initialP
             <p className="text-xs text-navy-300 mt-2">{sections.length ? Math.round(filledCount / sections.length * 100) : 0}% complete</p>
           </div>
 
+          <SubmissionSidebar proposal={proposal} analysis={analysis} onAssemble={onAssemble} />
+          <PageCounter proposal={proposal} analysis={analysis} />
+          <ScoreMaximizer analysis={analysis} />
           <ComplianceChecklist analysis={analysis} proposal={proposal} />
-
-          <div className="bg-white rounded-xl border border-navy-100 shadow-sm p-4">
-            <h4 className="text-sm font-semibold text-navy-800 mb-3">Quick Actions</h4>
-            <div className="space-y-2">
-              <button onClick={() => downloadAsWord(proposal, analysis, answers)} className="w-full text-left text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg flex items-center gap-2">📥 Download as Word</button>
-              <button onClick={handleCopy} className="w-full text-left text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg flex items-center gap-2">📋 Copy full text</button>
-              <button onClick={() => window.print()} className="w-full text-left text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg flex items-center gap-2">🖨️ Print / Save PDF</button>
-            </div>
-          </div>
 
           {(proposal.overallSuggestions || []).map((s, i) => (
             <div key={i} className="bg-white rounded-xl border border-navy-100 shadow-sm p-4 fade-in">
@@ -1250,8 +1346,7 @@ function CoverLetter({ analysis, answers, proposal, onUpdate }) {
           <span className="text-navy-400">{expanded ? '▲' : '▼'}</span>
         </button>
       </div>
-      {expanded && (
-        <div className="border-t border-navy-100">
+      <div className="border-t border-navy-100 print-section-body" style={{display: expanded ? 'block' : 'none'}}>
           {editing ? (
             <div className="px-6 py-4">
               <div className="grid grid-cols-2 gap-3 mb-4">
@@ -1278,7 +1373,7 @@ function CoverLetter({ analysis, answers, proposal, onUpdate }) {
               </div>
               <label className="block text-xs font-semibold text-navy-600 mb-1">Letter Body</label>
               <RichTextEditor value={letterHtml} onChange={val => { letterData.body = val; }} />
-              <div className="flex gap-2 mt-3">
+              <div className="flex gap-2 mt-3" data-print="hide">
                 <button onClick={() => handleSave(letterData.body || letterHtml)} className="bg-navy-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-800">Save</button>
                 <button onClick={() => setEditing(false)} className="border border-navy-200 text-navy-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-50">Cancel</button>
               </div>
@@ -1301,10 +1396,134 @@ function CoverLetter({ analysis, answers, proposal, onUpdate }) {
                   {letterData.signerPhone !== '[phone]' && <p className="text-navy-400 text-xs">{letterData.signerPhone}</p>}
                 </div>
               </div>
-              <div className="px-6 py-3 border-t border-navy-50">
+              <div className="px-6 py-3 border-t border-navy-50" data-print="hide">
                 <button onClick={() => setEditing(true)} className="text-xs text-navy-500 hover:text-navy-800 font-medium px-3 py-1.5 rounded-lg hover:bg-navy-50">✏️ Edit Cover Letter</button>
               </div>
             </>
+          )}
+        </div>
+    </div>
+  );
+}
+
+// ── Score Maximizer Panel ──
+function ScoreMaximizer({ analysis }) {
+  const [expanded, setExpanded] = useState(true);
+  const scoring = analysis.scoringStructure || {};
+  const criteria = analysis.evaluationCriteria || [];
+  const phases = scoring.phases || [];
+  const rubrics = scoring.scoringRubrics || [];
+  const thresholds = scoring.passingThresholds || [];
+  const notes = scoring.strategicNotes || [];
+
+  const hasContent = criteria.length > 0 || phases.length > 0 || rubrics.length > 0;
+  if (!hasContent) return null;
+
+  const totalPoints = rubrics.reduce((sum, r) => sum + (r.maxPoints || 0), 0);
+
+  return (
+    <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
+      <button onClick={() => setExpanded(!expanded)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-navy-50/50">
+        <div className="flex items-center gap-2">
+          <span className="text-sm">🎯</span>
+          <h4 className="text-sm font-semibold text-navy-800">Score Maximizer</h4>
+        </div>
+        <span className="text-navy-400 text-xs">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {expanded && (
+        <div className="border-t border-navy-100 px-4 py-3">
+          {scoring.evaluationMethod && (
+            <div className="mb-3 px-2 py-1.5 bg-indigo-50 rounded-lg">
+              <p className="text-xs font-semibold text-indigo-700">Method: {scoring.evaluationMethod}</p>
+            </div>
+          )}
+
+          {phases.length > 0 && (
+            <div className="mb-3">
+              <p className="text-xs font-semibold text-navy-600 mb-1.5">Evaluation Phases</p>
+              <div className="space-y-1">
+                {phases.map((ph, i) => (
+                  <div key={i} className={`flex items-start gap-2 text-xs rounded-lg px-2 py-1.5 ${ph.isEliminatory ? 'bg-red-50 border border-red-100' : 'bg-navy-50'}`}>
+                    <span className={`font-bold mt-0.5 flex-shrink-0 ${ph.isEliminatory ? 'text-red-500' : 'text-navy-400'}`}>{ph.phaseNumber || i + 1}</span>
+                    <div>
+                      <span className={`font-medium ${ph.isEliminatory ? 'text-red-700' : 'text-navy-700'}`}>{ph.phaseName}</span>
+                      {ph.isEliminatory && <span className="ml-1 text-red-400 font-semibold">⛔ GATE</span>}
+                      {ph.description && <p className="text-navy-500 mt-0.5">{ph.description}</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {thresholds.length > 0 && (
+            <div className="mb-3">
+              <p className="text-xs font-semibold text-navy-600 mb-1.5">Pass/Fail Thresholds</p>
+              {thresholds.map((t, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 mb-1">
+                  <span className="text-amber-500 font-bold">⚡</span>
+                  <span className="text-amber-800">{t.description || `${t.phase}: minimum ${t.threshold}`}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {criteria.length > 0 && (
+            <div className="mb-3">
+              <p className="text-xs font-semibold text-navy-600 mb-1.5">Weight Distribution</p>
+              {criteria.map((c, i) => (
+                <div key={i} className="mb-2">
+                  <div className="flex justify-between mb-0.5">
+                    <span className="text-xs font-medium text-navy-700">{c.factor}</span>
+                    <span className="text-xs font-bold text-navy-900">{c.weight}%</span>
+                  </div>
+                  <div className="w-full bg-navy-100 rounded-full h-2">
+                    <div className={`h-2 rounded-full transition-all ${c.weight >= 40 ? 'bg-gold-400' : c.weight >= 20 ? 'bg-emerald-400' : 'bg-navy-300'}`} style={{width: c.weight + '%'}} />
+                  </div>
+                  {c.description && <p className="text-xs text-navy-400 mt-0.5">{c.description}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {rubrics.length > 0 && (
+            <div className="mb-3">
+              <p className="text-xs font-semibold text-navy-600 mb-1.5">Scoring Rubrics {totalPoints > 0 && <span className="text-navy-400 font-normal">({totalPoints} pts total)</span>}</p>
+              <div className="space-y-1.5">
+                {rubrics.map((r, i) => (
+                  <div key={i} className="bg-navy-50 rounded-lg px-2 py-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-medium text-navy-700">{r.criterionName}</span>
+                      <span className="text-xs font-bold text-gold-500">{r.maxPoints} pts</span>
+                    </div>
+                    {r.scoringLevels && r.scoringLevels.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {r.scoringLevels.map((lv, li) => (
+                          <div key={li} className="flex items-start gap-1.5 text-xs">
+                            <span className="font-mono text-navy-400 flex-shrink-0 w-6 text-right">{lv.score}</span>
+                            <span className="text-navy-500">{lv.label}{lv.description ? ': ' + lv.description : ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {notes.length > 0 && (
+            <div className="mb-1">
+              <p className="text-xs font-semibold text-navy-600 mb-1.5">💡 Strategy Notes</p>
+              <div className="space-y-1">
+                {notes.map((n, i) => (
+                  <div key={i} className="flex items-start gap-1.5 text-xs bg-gold-400/10 rounded-lg px-2 py-1.5">
+                    <span className="text-gold-500 flex-shrink-0 mt-0.5">→</span>
+                    <span className="text-navy-700">{n}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -1312,7 +1531,7 @@ function CoverLetter({ analysis, answers, proposal, onUpdate }) {
   );
 }
 
-// ── Live Compliance Checklist ──
+// ── Live Compliance Checklist (Gate vs Scored vs Informational) ──
 function ComplianceChecklist({ analysis, proposal }) {
   const [checks, setChecks] = useState({});
   const [expanded, setExpanded] = useState(true);
@@ -1321,48 +1540,53 @@ function ComplianceChecklist({ analysis, proposal }) {
     setChecks(prev => ({ ...prev, [key]: !prev[key] }));
   }
 
+  // Build items with criteriaType
   const formatItems = (analysis.requiredFormat || []).map((f, i) => ({
     key: 'fmt_' + i,
     label: (f.sectionNumber ? f.sectionNumber + '. ' : '') + f.sectionTitle,
-    type: 'format',
-    critical: true,
+    criteriaType: 'informational',
     ref: f.description || '',
   }));
 
   const reqItems = (analysis.requirements || []).filter(r => r.type === 'mandatory').map((r, i) => ({
     key: 'req_' + i,
     label: r.text.length > 80 ? r.text.substring(0, 80) + '...' : r.text,
-    type: 'requirement',
-    critical: true,
+    criteriaType: 'gate',
     ref: r.section || '',
   }));
 
   const compItems = (analysis.complianceChecklist || []).map((c, i) => ({
     key: 'comp_' + i,
     label: c.item,
-    type: 'compliance',
-    critical: c.critical,
+    criteriaType: c.criteriaType || (c.critical ? 'gate' : 'informational'),
     ref: c.rfpReference || '',
   }));
 
   const allItems = [...formatItems, ...reqItems, ...compItems];
+
+  // Group by criteria type
+  const gateItems = allItems.filter(it => it.criteriaType === 'gate');
+  const scoredItems = allItems.filter(it => it.criteriaType === 'scored');
+  const infoItems = allItems.filter(it => it.criteriaType === 'informational');
+
   const checkedCount = allItems.filter(it => checks[it.key]).length;
   const pct = allItems.length ? Math.round(checkedCount / allItems.length * 100) : 0;
+  const gateUnchecked = gateItems.filter(it => !checks[it.key]).length;
 
   const groups = [
-    { title: 'Required Format', icon: '📐', items: formatItems },
-    { title: 'Mandatory Requirements', icon: '📋', items: reqItems },
-    { title: 'Compliance Items', icon: '✅', items: compItems },
+    { title: 'Disqualification Risks', items: gateItems, color: 'text-red-600', bgColor: 'bg-red-50', borderColor: 'border-red-100', description: 'Fail any = eliminated' },
+    { title: 'Scored Criteria', items: scoredItems, color: 'text-gold-600', bgColor: 'bg-gold-400/5', borderColor: 'border-gold-400/20', description: 'Point opportunities' },
+    { title: 'Submission & Format', items: infoItems, color: 'text-navy-600', bgColor: '', borderColor: '', description: 'Administrative items' },
   ].filter(g => g.items.length > 0);
 
   return (
     <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
       <button onClick={() => setExpanded(!expanded)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-navy-50/50">
         <div className="flex items-center gap-2">
-          <span className="text-sm">📝</span>
           <h4 className="text-sm font-semibold text-navy-800">Compliance Checklist</h4>
         </div>
         <div className="flex items-center gap-2">
+          {gateUnchecked > 0 && <span className="text-xs font-bold text-red-500">{gateUnchecked} gates open</span>}
           <span className={`text-xs font-bold ${pct === 100 ? 'text-emerald-600' : pct > 50 ? 'text-gold-500' : 'text-navy-400'}`}>{checkedCount}/{allItems.length}</span>
           <span className="text-navy-400 text-xs">{expanded ? '▲' : '▼'}</span>
         </div>
@@ -1370,11 +1594,21 @@ function ComplianceChecklist({ analysis, proposal }) {
       {expanded && (
         <div className="border-t border-navy-100 px-4 py-3">
           <div className="w-full bg-navy-100 rounded-full h-1.5 mb-3">
-            <div className={`h-1.5 rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : 'bg-gold-400'}`} style={{width: pct + '%'}}/>
+            <div className={`h-1.5 rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : gateUnchecked > 0 ? 'bg-red-400' : 'bg-gold-400'}`} style={{width: pct + '%'}}/>
           </div>
+
+          {gateUnchecked > 0 && (
+            <div className="mb-3 px-2 py-1.5 bg-red-50 border border-red-100 rounded-lg">
+              <p className="text-xs font-semibold text-red-600">⚠️ {gateUnchecked} pass/fail requirement{gateUnchecked > 1 ? 's' : ''} not yet confirmed — proposal at risk of disqualification</p>
+            </div>
+          )}
+
           {groups.map(g => (
             <div key={g.title} className="mb-3 last:mb-0">
-              <p className="text-xs font-semibold text-navy-600 mb-1.5 flex items-center gap-1">{g.icon} {g.title}</p>
+              <div className={`flex items-center justify-between mb-1.5 ${g.bgColor ? g.bgColor + ' ' + g.borderColor + ' border rounded-lg px-2 py-1' : ''}`}>
+                <p className={`text-xs font-semibold ${g.color}`}>{g.title}</p>
+                <p className="text-xs text-navy-400">{g.description}</p>
+              </div>
               <div className="space-y-1">
                 {g.items.map(it => (
                   <label key={it.key} className="flex items-start gap-2 cursor-pointer group py-0.5">
@@ -1382,7 +1616,6 @@ function ComplianceChecklist({ analysis, proposal }) {
                       className="w-3.5 h-3.5 mt-0.5 rounded flex-shrink-0" />
                     <span className={`text-xs leading-relaxed ${checks[it.key] ? 'text-navy-400 line-through' : 'text-navy-700'}`}>
                       {it.label}
-                      {it.critical && !checks[it.key] && <span className="ml-1 text-red-400">*</span>}
                     </span>
                   </label>
                 ))}
@@ -1395,9 +1628,621 @@ function ComplianceChecklist({ analysis, proposal }) {
   );
 }
 
+// ── Live Page Counter ──
+function PageCounter({ proposal, analysis }) {
+  const pageConstraints = analysis.pageConstraints || analysis.rfpSummary?.pageLimits ? {
+    totalPageLimit: (analysis.pageConstraints || {}).totalPageLimit || analysis.rfpSummary?.pageLimits || null,
+    fontMinSize: (analysis.pageConstraints || {}).fontMinSize || null,
+    pageFormat: (analysis.pageConstraints || {}).pageFormat || null,
+    exclusions: (analysis.pageConstraints || {}).exclusions || [],
+    sectionLimits: (analysis.pageConstraints || {}).sectionLimits || [],
+  } : null;
+
+  // Count words across all proposal sections
+  const sections = proposal?.sections || [];
+  let totalWords = 0;
+  const sectionCounts = sections.map(s => {
+    const div = document.createElement('div');
+    div.innerHTML = s.content || '';
+    const text = div.textContent || '';
+    const words = text.trim().split(/\s+/).filter(w => w.length > 0).length;
+    totalWords += words;
+    return { title: s.title, words };
+  });
+
+  // Cover letter word count
+  const clDiv = document.createElement('div');
+  clDiv.innerHTML = proposal?.coverLetter?.body || '';
+  const clWords = (clDiv.textContent || '').trim().split(/\s+/).filter(w => w.length > 0).length;
+  totalWords += clWords;
+
+  // ~275 words per printed page (single-spaced, 10-11pt)
+  const WORDS_PER_PAGE = 275;
+  const estimatedPages = Math.ceil(totalWords / WORDS_PER_PAGE);
+
+  // Parse page limit
+  let pageLimit = null;
+  if (pageConstraints?.totalPageLimit) {
+    const match = String(pageConstraints.totalPageLimit).match(/(\d+)/);
+    if (match) pageLimit = parseInt(match[1]);
+  }
+
+  const isOverLimit = pageLimit && estimatedPages > pageLimit;
+  const isNearLimit = pageLimit && estimatedPages > pageLimit * 0.85 && !isOverLimit;
+
+  return (
+    <div className={`bg-white rounded-xl border shadow-sm ${isOverLimit ? 'border-red-200' : 'border-navy-100'}`}>
+      <div className="px-4 py-3">
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2">
+            <span className="text-sm">📏</span>
+            <h4 className="text-sm font-semibold text-navy-800">Page Estimate</h4>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className={`text-lg font-bold ${isOverLimit ? 'text-red-500' : isNearLimit ? 'text-amber-500' : 'text-navy-900'}`}>{estimatedPages}</span>
+            {pageLimit && <span className="text-xs text-navy-400">/ {pageLimit} pages</span>}
+          </div>
+        </div>
+
+        {pageLimit && (
+          <div className="w-full bg-navy-100 rounded-full h-2 mb-2">
+            <div className={`h-2 rounded-full transition-all ${isOverLimit ? 'bg-red-400' : isNearLimit ? 'bg-amber-400' : 'bg-emerald-400'}`}
+              style={{width: Math.min(100, (estimatedPages / pageLimit) * 100) + '%'}} />
+          </div>
+        )}
+
+        {isOverLimit && (
+          <div className="bg-red-50 border border-red-100 rounded-lg px-2 py-1.5 mb-2">
+            <p className="text-xs font-semibold text-red-600">⚠️ Exceeds page limit by ~{estimatedPages - pageLimit} page{estimatedPages - pageLimit > 1 ? 's' : ''} — may be rejected</p>
+          </div>
+        )}
+        {isNearLimit && (
+          <div className="bg-amber-50 border border-amber-100 rounded-lg px-2 py-1.5 mb-2">
+            <p className="text-xs font-medium text-amber-700">Approaching page limit — {pageLimit - estimatedPages} page{pageLimit - estimatedPages > 1 ? 's' : ''} remaining</p>
+          </div>
+        )}
+
+        <div className="text-xs text-navy-400 space-y-0.5">
+          <p>{totalWords.toLocaleString()} words total (~{WORDS_PER_PAGE} words/page)</p>
+          {pageConstraints?.fontMinSize && <p>Min font: {pageConstraints.fontMinSize}</p>}
+          {pageConstraints?.pageFormat && <p>Format: {pageConstraints.pageFormat}</p>}
+          {pageConstraints?.exclusions?.length > 0 && <p>Excluded from count: {pageConstraints.exclusions.join(', ')}</p>}
+        </div>
+
+        {sectionCounts.length > 0 && (
+          <details className="mt-2">
+            <summary className="text-xs text-navy-500 cursor-pointer hover:text-navy-700 font-medium">Section breakdown</summary>
+            <div className="mt-1 space-y-0.5">
+              {clWords > 0 && (
+                <div className="flex justify-between text-xs">
+                  <span className="text-navy-500 truncate mr-2">Cover Letter</span>
+                  <span className="text-navy-400 flex-shrink-0">{clWords}w · ~{Math.ceil(clWords / WORDS_PER_PAGE)}p</span>
+                </div>
+              )}
+              {sectionCounts.map((sc, i) => (
+                <div key={i} className="flex justify-between text-xs">
+                  <span className="text-navy-500 truncate mr-2">{sc.title}</span>
+                  <span className="text-navy-400 flex-shrink-0">{sc.words}w · ~{Math.max(1, Math.ceil(sc.words / WORDS_PER_PAGE))}p</span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Submission Assembly Panel ──
+function SubmissionSidebar({ proposal, analysis, onAssemble }) {
+  const sub = analysis.submissionInstructions || {};
+  const sections = (proposal?.sections || []).filter(s => s.content && s.content.trim().length > 20);
+
+  return (
+    <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
+      <div className="px-4 py-3 border-b border-navy-100">
+        <h4 className="text-sm font-semibold text-navy-800">Submission</h4>
+      </div>
+      <div className="px-4 py-3 space-y-3">
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-navy-600">Proposal Sections</span>
+            <span className="text-xs font-medium text-emerald-600">{sections.length} ready</span>
+          </div>
+        </div>
+        {sub.deadline && (
+          <div className="pt-2 border-t border-navy-50">
+            <p className="text-xs text-red-600 font-medium">Deadline: {sub.deadline}</p>
+          </div>
+        )}
+        <button onClick={onAssemble} className="w-full bg-navy-900 hover:bg-navy-800 text-white px-4 py-2.5 rounded-xl font-semibold text-sm shadow-lg">
+          Assemble Submission →
+        </button>
+        <div className="space-y-1.5">
+          <button onClick={() => { copyProposalText(proposal); }} className="w-full text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg border border-navy-200 font-medium">
+            Copy proposal text
+          </button>
+          <button onClick={() => window.print()} className="w-full text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg border border-navy-200 font-medium">
+            Print / Save PDF
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Submission Builder — Full Storyboard View ──
+function SubmissionBuilder({ proposal, analysis, answers, allDocuments = [], onBack }) {
+  const WORDS_PER_PAGE = 275;
+
+  // Build initial package items from proposal
+  function buildInitialPackage() {
+    const items = [];
+    // Cover letter
+    const cl = proposal.coverLetter || {};
+    const clBody = cl.body || '';
+    items.push({
+      id: 'cover_letter',
+      type: 'cover_letter',
+      title: 'Cover Letter',
+      subtitle: cl.companyName || 'Introduction',
+      wordCount: clBody.replace(/<[^>]*>/g, '').trim().split(/\s+/).filter(w => w).length,
+      included: true,
+      source: 'proposal',
+    });
+    // Proposal sections
+    (proposal.sections || []).forEach((s, i) => {
+      const div = document.createElement('div');
+      div.innerHTML = s.content || '';
+      const words = (div.textContent || '').trim().split(/\s+/).filter(w => w).length;
+      items.push({
+        id: 'section_' + (s.id || i),
+        sectionId: s.id,
+        type: 'proposal_section',
+        title: s.title,
+        subtitle: s.volume || 'Proposal Section',
+        wordCount: words,
+        included: true,
+        source: 'proposal',
+      });
+    });
+    return items;
+  }
+
+  // Build library items from uploaded/vault docs
+  function buildLibrary() {
+    const typeLabels = {
+      team_bios: 'Team Bio / CV',
+      past_performance: 'Past Performance',
+      certifications: 'Certification / License',
+      vendor_capability: 'Capability Statement',
+      vendor_summary: 'Vendor Summary',
+      supporting: 'Supporting Document',
+    };
+    const appendixTypes = ['team_bios','past_performance','certifications','vendor_capability','vendor_summary','supporting'];
+    return allDocuments
+      .filter(d => appendixTypes.includes(d.type) && d.text && d.text.trim().length > 20)
+      .map((d, i) => ({
+        id: 'lib_' + i + '_' + d.type,
+        type: 'appendix',
+        docType: d.type,
+        title: (d.name || 'Document').replace(/^\[Vault\] /, ''),
+        subtitle: typeLabels[d.type] || d.type,
+        wordCount: (d.text || '').trim().split(/\s+/).filter(w => w).length,
+        text: d.text,
+        included: false,
+        source: 'library',
+      }));
+  }
+
+  // Check RFP for required attachments
+  function buildRequiredItems() {
+    const required = [];
+    const requiredForms = analysis.requiredForms || [];
+    const assetRequests = analysis.assetRequests || [];
+    requiredForms.forEach((f, i) => {
+      required.push({
+        id: 'form_' + i,
+        type: 'required_form',
+        title: f.formName || f.name || 'Required Form',
+        subtitle: 'PDF form — complete separately',
+        wordCount: 0,
+        included: false,
+        source: 'required',
+        isMissing: true,
+      });
+    });
+    assetRequests.filter(a => a.type !== 'form').forEach((a, i) => {
+      required.push({
+        id: 'asset_' + i,
+        type: 'required_asset',
+        title: a.description || a.name || 'Requested Document',
+        subtitle: 'Attachment — provide separately',
+        wordCount: 0,
+        included: false,
+        source: 'required',
+        isMissing: true,
+      });
+    });
+    return required;
+  }
+
+  const [packageItems, setPackageItems] = useState(buildInitialPackage);
+  const [libraryItems, setLibraryItems] = useState(buildLibrary);
+  const [requiredItems] = useState(buildRequiredItems);
+  const [dragItem, setDragItem] = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [downloading, setDownloading] = useState(false);
+
+  // Auto-match library items to RFP requirements on first render
+  useEffect(() => {
+    // Auto-include library items that match RFP-required types
+    const reqTypes = new Set();
+    (analysis.requirements || []).forEach(r => {
+      if (/team|personnel|staff|cv|bio|resume/i.test(r.text)) reqTypes.add('team_bios');
+      if (/past performance|experience|track record/i.test(r.text)) reqTypes.add('past_performance');
+      if (/certif|licen|accredit/i.test(r.text)) reqTypes.add('certifications');
+      if (/capability|organization|company profile/i.test(r.text)) reqTypes.add('vendor_capability');
+    });
+    if (reqTypes.size > 0) {
+      const toAdd = [];
+      setLibraryItems(prev => {
+        const remaining = [];
+        prev.forEach(item => {
+          if (reqTypes.has(item.docType)) {
+            toAdd.push({ ...item, included: true, autoMatched: true });
+          } else {
+            remaining.push(item);
+          }
+        });
+        return remaining;
+      });
+      if (toAdd.length > 0) {
+        setPackageItems(prev => [...prev, ...toAdd]);
+      }
+    }
+  }, []);
+
+  // Drag handlers for reordering within the package
+  function handleDragStart(e, item, fromLibrary) {
+    setDragItem({ ...item, fromLibrary });
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', item.id);
+  }
+
+  function handleDragOver(e, idx) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOverIdx(idx);
+  }
+
+  function handleDrop(e, targetIdx) {
+    e.preventDefault();
+    setDragOverIdx(null);
+    if (!dragItem) return;
+
+    if (dragItem.fromLibrary) {
+      // Move from library to package at target position
+      setLibraryItems(prev => prev.filter(it => it.id !== dragItem.id));
+      const newItem = { ...dragItem, included: true, fromLibrary: undefined };
+      setPackageItems(prev => {
+        const arr = [...prev];
+        arr.splice(targetIdx, 0, newItem);
+        return arr;
+      });
+    } else {
+      // Reorder within package
+      setPackageItems(prev => {
+        const arr = [...prev];
+        const fromIdx = arr.findIndex(it => it.id === dragItem.id);
+        if (fromIdx === -1 || fromIdx === targetIdx) return prev;
+        const [moved] = arr.splice(fromIdx, 1);
+        arr.splice(targetIdx > fromIdx ? targetIdx - 1 : targetIdx, 0, moved);
+        return arr;
+      });
+    }
+    setDragItem(null);
+  }
+
+  function handleDragEnd() {
+    setDragItem(null);
+    setDragOverIdx(null);
+  }
+
+  // Add from library
+  function addToPackage(item) {
+    setLibraryItems(prev => prev.filter(it => it.id !== item.id));
+    setPackageItems(prev => [...prev, { ...item, included: true }]);
+  }
+
+  // Remove from package back to library
+  function removeFromPackage(item) {
+    setPackageItems(prev => prev.filter(it => it.id !== item.id));
+    if (item.source === 'library') {
+      setLibraryItems(prev => [...prev, { ...item, included: false }]);
+    }
+  }
+
+  // Move up/down
+  function moveItem(idx, dir) {
+    setPackageItems(prev => {
+      const arr = [...prev];
+      const target = idx + dir;
+      if (target < 0 || target >= arr.length) return prev;
+      [arr[idx], arr[target]] = [arr[target], arr[idx]];
+      return arr;
+    });
+  }
+
+  // Add a custom divider / section break
+  function addDivider(afterIdx) {
+    const divider = {
+      id: 'divider_' + Date.now(),
+      type: 'divider',
+      title: 'Section Break',
+      subtitle: 'Page break in final document',
+      wordCount: 0,
+      included: true,
+      source: 'custom',
+    };
+    setPackageItems(prev => {
+      const arr = [...prev];
+      arr.splice(afterIdx + 1, 0, divider);
+      return arr;
+    });
+  }
+
+  // Totals
+  const totalWords = packageItems.filter(it => it.included).reduce((s, it) => s + it.wordCount, 0);
+  const totalPages = Math.ceil(totalWords / WORDS_PER_PAGE);
+  const pageLimit = (analysis.pageConstraints || {}).totalPageLimit;
+  const overLimit = pageLimit && totalPages > parseInt(pageLimit);
+
+  // Build download package
+  async function handleDownload() {
+    setDownloading(true);
+    try {
+      await downloadAssembledPackage(proposal, analysis, answers, packageItems, allDocuments);
+    } catch (e) { console.error('ZIP error:', e); }
+    setDownloading(false);
+  }
+
+  // Type badge colors
+  const badgeColors = {
+    cover_letter: 'bg-blue-100 text-blue-700',
+    proposal_section: 'bg-navy-100 text-navy-700',
+    appendix: 'bg-purple-100 text-purple-700',
+    divider: 'bg-navy-50 text-navy-400',
+    required_form: 'bg-amber-100 text-amber-700',
+    required_asset: 'bg-amber-100 text-amber-700',
+  };
+
+  const badgeLabels = {
+    cover_letter: 'Cover Letter',
+    proposal_section: 'Proposal',
+    appendix: 'Appendix',
+    divider: 'Break',
+    required_form: 'Form',
+    required_asset: 'Attachment',
+  };
+
+  const sub = analysis.submissionInstructions || {};
+
+  return (
+    <div className="max-w-7xl mx-auto fade-in">
+      <div className="flex flex-wrap justify-between items-start gap-4 mb-6">
+        <div>
+          <h2 className="text-2xl font-bold text-navy-900">Assemble Submission Package</h2>
+          <p className="text-navy-500 text-sm mt-1">Drag to reorder. Add appendix materials from the library. Download when ready.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={onBack} className="border border-navy-200 text-navy-700 hover:bg-navy-50 px-5 py-2.5 rounded-xl font-semibold text-sm">← Proposal</button>
+          <button onClick={handleDownload} disabled={downloading} className="bg-navy-900 hover:bg-navy-800 text-white px-6 py-2.5 rounded-xl font-semibold text-sm shadow-lg disabled:opacity-60">
+            {downloading ? 'Packaging...' : 'Download .zip'}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Package storyboard — left 2/3 */}
+        <div className="lg:col-span-2">
+          {/* Summary bar */}
+          <div className="bg-white rounded-xl border border-navy-100 shadow-sm p-4 mb-4 flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold text-navy-800">{packageItems.length} items</span>
+              <span className="text-navy-300">·</span>
+              <span className={`text-sm font-semibold ${overLimit ? 'text-red-600' : 'text-navy-600'}`}>~{totalPages} pages</span>
+              {pageLimit && <span className="text-xs text-navy-400">/ {pageLimit} limit</span>}
+            </div>
+            {overLimit && <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-1 rounded-full">Over page limit</span>}
+            {sub.deadline && <span className="text-xs font-medium text-red-600 ml-auto">Deadline: {sub.deadline}</span>}
+          </div>
+
+          {/* Storyboard cards */}
+          <div className="space-y-1">
+            {packageItems.map((item, idx) => (
+              <div key={item.id}>
+                {/* Drop zone before this item */}
+                <div
+                  onDragOver={e => handleDragOver(e, idx)}
+                  onDrop={e => handleDrop(e, idx)}
+                  className={`h-1 rounded transition-all ${dragOverIdx === idx ? 'bg-gold-400 h-2' : ''}`}
+                />
+                {item.type === 'divider' ? (
+                  <div className="flex items-center gap-3 py-2 px-4 group"
+                    draggable onDragStart={e => handleDragStart(e, item, false)} onDragEnd={handleDragEnd}>
+                    <div className="flex-1 border-t-2 border-dashed border-navy-200" />
+                    <span className="text-xs text-navy-400 font-medium whitespace-nowrap">Page Break</span>
+                    <div className="flex-1 border-t-2 border-dashed border-navy-200" />
+                    <button onClick={() => removeFromPackage(item)} className="text-navy-300 hover:text-red-500 text-xs opacity-0 group-hover:opacity-100 transition-opacity">Remove</button>
+                  </div>
+                ) : (
+                  <div
+                    draggable
+                    onDragStart={e => handleDragStart(e, item, false)}
+                    onDragEnd={handleDragEnd}
+                    className={`bg-white rounded-xl border shadow-sm p-4 flex items-center gap-4 cursor-grab active:cursor-grabbing transition-all hover:shadow-md group ${
+                      item.autoMatched ? 'border-gold-400/50' : 'border-navy-100'
+                    }`}
+                  >
+                    {/* Drag handle + position number */}
+                    <div className="flex flex-col items-center gap-0.5 text-navy-300 select-none">
+                      <span className="text-xs">⠿</span>
+                      <span className="text-xs font-bold text-navy-400">{idx + 1}</span>
+                    </div>
+
+                    {/* Type badge */}
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${badgeColors[item.type] || 'bg-navy-100 text-navy-600'}`}>
+                      {badgeLabels[item.type] || item.type}
+                    </span>
+
+                    {/* Title + subtitle */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-navy-800 truncate">{item.title}</p>
+                      <p className="text-xs text-navy-400 truncate">{item.subtitle}</p>
+                    </div>
+
+                    {/* Word / page count */}
+                    {item.wordCount > 0 && (
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs font-medium text-navy-600">~{Math.ceil(item.wordCount / WORDS_PER_PAGE)} pg</p>
+                        <p className="text-xs text-navy-400">{item.wordCount.toLocaleString()} words</p>
+                      </div>
+                    )}
+
+                    {/* Auto-matched badge */}
+                    {item.autoMatched && (
+                      <span className="text-xs text-gold-600 bg-gold-400/10 px-2 py-0.5 rounded-full whitespace-nowrap">Auto-matched</span>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                      <button onClick={() => moveItem(idx, -1)} disabled={idx === 0} className="p-1 text-navy-400 hover:text-navy-700 disabled:opacity-20" title="Move up">↑</button>
+                      <button onClick={() => moveItem(idx, 1)} disabled={idx === packageItems.length - 1} className="p-1 text-navy-400 hover:text-navy-700 disabled:opacity-20" title="Move down">↓</button>
+                      <button onClick={() => addDivider(idx)} className="p-1 text-navy-400 hover:text-navy-700" title="Add page break after">┄</button>
+                      {item.source !== 'proposal' && (
+                        <button onClick={() => removeFromPackage(item)} className="p-1 text-navy-400 hover:text-red-500" title="Remove">✕</button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {/* Final drop zone */}
+            <div
+              onDragOver={e => handleDragOver(e, packageItems.length)}
+              onDrop={e => handleDrop(e, packageItems.length)}
+              className={`h-8 rounded-xl border-2 border-dashed transition-all flex items-center justify-center ${
+                dragOverIdx === packageItems.length ? 'border-gold-400 bg-gold-400/5' : 'border-navy-200/50'
+              }`}
+            >
+              <span className="text-xs text-navy-300">Drop here to add at end</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Right sidebar — Material Library */}
+        <div className="space-y-4">
+          {/* Available materials */}
+          <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
+            <div className="px-4 py-3 border-b border-navy-100">
+              <h4 className="text-sm font-semibold text-navy-800">Material Library</h4>
+              <p className="text-xs text-navy-400 mt-0.5">Drag into the package or click to add</p>
+            </div>
+            <div className="px-4 py-3">
+              {libraryItems.length === 0 ? (
+                <p className="text-xs text-navy-400 text-center py-4">All available materials are in the package</p>
+              ) : (
+                <div className="space-y-2">
+                  {libraryItems.map(item => (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={e => handleDragStart(e, item, true)}
+                      onDragEnd={handleDragEnd}
+                      className="bg-navy-50 rounded-lg p-3 cursor-grab active:cursor-grabbing hover:bg-navy-100 transition-colors group"
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${badgeColors.appendix} flex-shrink-0`}>
+                          {item.subtitle}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-navy-800 truncate">{item.title}</p>
+                          <p className="text-xs text-navy-400">{item.wordCount.toLocaleString()} words · ~{Math.ceil(item.wordCount / WORDS_PER_PAGE)} pg</p>
+                        </div>
+                        <button onClick={() => addToPackage(item)} className="text-xs text-navy-500 hover:text-navy-800 font-bold opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" title="Add to package">+</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Required items not yet in package */}
+          {requiredItems.length > 0 && (
+            <div className="bg-white rounded-xl border border-amber-200 shadow-sm">
+              <div className="px-4 py-3 border-b border-amber-100 bg-amber-50 rounded-t-xl">
+                <h4 className="text-sm font-semibold text-amber-800">RFP Requirements</h4>
+                <p className="text-xs text-amber-600 mt-0.5">These need to be prepared separately</p>
+              </div>
+              <div className="px-4 py-3 space-y-2">
+                {requiredItems.map(item => (
+                  <div key={item.id} className="flex items-start gap-2 py-1">
+                    <span className="w-4 h-4 rounded border-2 border-amber-300 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="text-xs font-medium text-navy-700">{item.title}</p>
+                      <p className="text-xs text-navy-400">{item.subtitle}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Submission info */}
+          {(sub.method || sub.email || sub.portal) && (
+            <div className="bg-white rounded-xl border border-navy-100 shadow-sm p-4">
+              <h4 className="text-sm font-semibold text-navy-800 mb-2">Submission Details</h4>
+              {sub.method && <p className="text-xs text-navy-600 mb-1">{sub.method}</p>}
+              {sub.email && <p className="text-xs text-navy-500">Email: {sub.email}</p>}
+              {sub.portal && <p className="text-xs text-navy-500">Portal: {sub.portal}</p>}
+              {sub.deadline && <p className="text-xs text-red-600 font-medium mt-2">Deadline: {sub.deadline}</p>}
+            </div>
+          )}
+
+          {/* Download section */}
+          <div className="bg-gradient-to-br from-navy-900 to-navy-800 rounded-xl p-5 text-white">
+            <h3 className="font-bold text-sm mb-2">Ready to Submit?</h3>
+            <p className="text-navy-200 text-xs mb-3">Your package has {packageItems.length} items across ~{totalPages} pages.</p>
+            <button onClick={handleDownload} disabled={downloading} className="w-full bg-gold-400 hover:bg-gold-500 text-navy-900 px-4 py-2.5 rounded-xl font-bold text-sm shadow-lg transition-colors disabled:opacity-60">
+              {downloading ? 'Packaging ZIP...' : 'Download Full Package (.zip)'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Download as Word Doc ──
-function downloadAsWord(proposal, analysis, answers) {
-  // Cover letter page
+function downloadAsWord(proposal, analysis) {
+  const html = buildProposalDocHtml(proposal, analysis);
+  const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (proposal.title || 'Proposal').replace(/[^a-zA-Z0-9 ]/g, '') + '.doc';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+// ── Download Assembled Package (from SubmissionBuilder storyboard order) ──
+// ── Build the proposal .doc HTML (cover letter + sections only) ──
+function buildProposalDocHtml(proposal, analysis) {
   const cl = proposal.coverLetter || {};
   const rfp = (analysis || {}).rfpSummary || {};
   const sub = (analysis || {}).submissionInstructions || {};
@@ -1408,28 +2253,26 @@ function downloadAsWord(proposal, analysis, answers) {
   const clRecipient = cl.recipientName || (rfp.agency || '[Procurement Officer]');
   const clOrg = cl.recipientOrg || rfp.agency || '[Agency]';
   const clAddr = cl.recipientAddress || sub.address || '';
-  const clBody = cl.body || `<p>Dear ${clRecipient},</p><p>We are pleased to submit this comprehensive proposal in response to the Request for Proposal${rfp.solicitation ? ' (' + rfp.solicitation + ')' : ''} issued by <strong>${clOrg}</strong>${rfp.title ? ' seeking <em>' + rfp.title + '</em>' : ''}.</p><p><strong>${clCompany}</strong> is honored to have the opportunity to collaborate with ${clOrg} on this undertaking, and we are confident in our ability to deliver beyond satisfactory results.</p><p>We welcome an opportunity to review the contents of this proposal at your convenience.</p>`;
+  const clBody = cl.body || '<p>Dear ' + clRecipient + ',</p><p>We are pleased to submit this proposal.</p>';
 
-  const coverLetterHtml = `
-    <div style="page-break-after:always;">
-      <p style="text-align:right;color:#334e68;">${cl.date || today}</p>
-      <p style="color:#334e68;white-space:pre-line;margin-top:32px;">${clRecipient}\n${clOrg}\n${clAddr}</p>
-      <div style="margin-top:24px;">${clBody}</div>
-      <p style="margin-top:40px;">Best,</p>
-      <p style="margin-top:32px;font-style:italic;color:#9fb3c8;font-size:9pt;">[Signature]</p>
-      <p style="font-weight:bold;margin-top:4px;">${clSigner}</p>
-      <p>${clTitle}</p>
-      <p style="margin-top:12px;color:#627d98;">${clCompany}</p>
-      ${cl.signerEmail && cl.signerEmail !== '[email]' ? '<p style="color:#829ab1;font-size:9pt;">' + cl.signerEmail + '</p>' : ''}
-      ${cl.signerPhone && cl.signerPhone !== '[phone]' ? '<p style="color:#829ab1;font-size:9pt;">' + cl.signerPhone + '</p>' : ''}
-    </div>`;
+  const coverLetterHtml = '<div style="page-break-after:always;">'
+    + '<p style="text-align:right;color:#334e68;">' + (cl.date || today) + '</p>'
+    + '<p style="color:#334e68;white-space:pre-line;margin-top:32px;">' + clRecipient + '\n' + clOrg + '\n' + clAddr + '</p>'
+    + '<div style="margin-top:24px;">' + clBody + '</div>'
+    + '<p style="margin-top:40px;">Best,</p>'
+    + '<p style="margin-top:32px;font-style:italic;color:#9fb3c8;font-size:9pt;">[Signature]</p>'
+    + '<p style="font-weight:bold;margin-top:4px;">' + clSigner + '</p>'
+    + '<p>' + clTitle + '</p>'
+    + '<p style="margin-top:12px;color:#627d98;">' + clCompany + '</p>'
+    + (cl.signerEmail && cl.signerEmail !== '[email]' ? '<p style="color:#829ab1;font-size:9pt;">' + cl.signerEmail + '</p>' : '')
+    + (cl.signerPhone && cl.signerPhone !== '[phone]' ? '<p style="color:#829ab1;font-size:9pt;">' + cl.signerPhone + '</p>' : '')
+    + '</div>';
 
   const sections = (proposal.sections || []).map(s =>
-    '<h2 style="color:#102a43;border-bottom:2px solid #d9e2ec;padding-bottom:4px;margin-top:24px;">' +
-    s.title + '</h2>' + (s.content || '')
+    '<h2 style="color:#102a43;border-bottom:2px solid #d9e2ec;padding-bottom:4px;margin-top:24px;">' + s.title + '</h2>' + (s.content || '')
   ).join('');
 
-  const html = [
+  return [
     '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">',
     '<head><meta charset="utf-8"><title>' + (proposal.title || 'Proposal') + '</title>',
     '<style>',
@@ -1445,18 +2288,125 @@ function downloadAsWord(proposal, analysis, answers) {
     'li { margin-bottom: 4px; }',
     '</style></head><body>',
     coverLetterHtml,
-    '<h1>' + (proposal.title || 'Proposal Draft') + '</h1>',
+    '<h1>' + (proposal.title || 'Proposal') + '</h1>',
     '<p style="color:#627d98;font-size:10pt;">' + (proposal.solicitation || '') + '</p>',
     '<hr style="border:1px solid #d9e2ec;margin:16px 0;">',
     sections,
     '</body></html>'
   ].join('');
+}
 
-  const blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
-  const url = URL.createObjectURL(blob);
+// ── Download Assembled Package as ZIP ──
+async function downloadAssembledPackage(proposal, analysis, answers, packageItems, allDocuments) {
+  const zip = new JSZip();
+  const safeName = (s) => (s || 'Document').replace(/[^a-zA-Z0-9 _\-\.]/g, '').substring(0, 80);
+  const proposalTitle = safeName(proposal.title || 'Proposal');
+
+  // Build file index for the Table of Contents
+  const tocLines = [];
+  let fileNum = 0;
+
+  // --- 1. Proposal document (cover letter + all sections) ---
+  fileNum++;
+  const prefix = String(fileNum).padStart(2, '0');
+  const proposalHtml = buildProposalDocHtml(proposal, analysis);
+  const proposalFileName = prefix + ' - ' + proposalTitle + '.doc';
+  zip.file(proposalFileName, '\ufeff' + proposalHtml);
+  tocLines.push({ num: fileNum, name: proposalFileName, description: 'Cover letter and full proposal' });
+
+  // --- 2. Appendix files in storyboard order ---
+  const appendixItems = packageItems.filter(it => it.type === 'appendix');
+  let appendixLetter = 0;
+
+  for (const item of appendixItems) {
+    fileNum++;
+    appendixLetter++;
+    const letter = String.fromCharCode(64 + appendixLetter);
+    const numPrefix = String(fileNum).padStart(2, '0');
+
+    // Try to find the original file blob from allDocuments
+    const matchDoc = allDocuments.find(d => {
+      const cleanName = (d.name || '').replace(/^\[Vault\] /, '');
+      return cleanName === item.title || d.name === item.title;
+    });
+
+    if (matchDoc && matchDoc.originalFile) {
+      // Include original file in its native format
+      const ext = matchDoc.originalFile.name.split('.').pop() || 'pdf';
+      const fileName = numPrefix + ' - Appendix ' + letter + ' - ' + safeName(item.title) + '.' + ext;
+      const buf = await matchDoc.originalFile.arrayBuffer();
+      zip.file(fileName, buf);
+      tocLines.push({ num: fileNum, name: fileName, description: item.subtitle + ' (original format)' });
+    } else {
+      // Text-only (vault doc) — render as .doc
+      const text = item.text || '';
+      const docHtml = [
+        '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">',
+        '<head><meta charset="utf-8"><title>' + item.title + '</title>',
+        '<style>body { font-family: Calibri, Arial, sans-serif; color: #334e68; line-height: 1.6; margin: 40px; } h1 { color: #102a43; font-size: 20pt; } h2 { color: #102a43; font-size: 16pt; } p { margin-bottom: 8px; }</style></head><body>',
+        '<h1>Appendix ' + letter + ': ' + item.title + '</h1>',
+        '<p style="color:#627d98;font-size:10pt;margin-bottom:16px;">' + item.subtitle + '</p>',
+        '<hr style="border:1px solid #d9e2ec;margin:12px 0;">',
+        text.split('\n').filter(l => l.trim()).map(l => '<p>' + l + '</p>').join(''),
+        '</body></html>'
+      ].join('');
+      const fileName = numPrefix + ' - Appendix ' + letter + ' - ' + safeName(item.title) + '.doc';
+      zip.file(fileName, '\ufeff' + docHtml);
+      tocLines.push({ num: fileNum, name: fileName, description: item.subtitle + ' (generated from text)' });
+    }
+  }
+
+  // --- 3. Table of Contents / Index ---
+  const sub = (analysis || {}).submissionInstructions || {};
+  const rfp = (analysis || {}).rfpSummary || {};
+  const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+
+  let tocHtml = '<html><head><meta charset="utf-8"><title>Submission Index</title>';
+  tocHtml += '<style>body { font-family: Calibri, Arial, sans-serif; color: #334e68; line-height: 1.8; margin: 40px; } h1 { color: #102a43; font-size: 22pt; } h2 { color: #102a43; font-size: 14pt; margin-top: 24px; } table { width: 100%; border-collapse: collapse; margin: 16px 0; } th { background: #102a43; color: white; padding: 8px 12px; text-align: left; font-size: 10pt; } td { padding: 8px 12px; border-bottom: 1px solid #d9e2ec; font-size: 10pt; } tr:nth-child(even) { background: #f8fafc; }</style></head><body>';
+  tocHtml += '<h1>Submission Package — Table of Contents</h1>';
+  tocHtml += '<p style="color:#627d98;">' + (rfp.title || proposal.title || '') + '</p>';
+  tocHtml += '<p style="color:#627d98;font-size:9pt;">Solicitation: ' + (rfp.solicitation || proposal.solicitation || 'N/A') + '</p>';
+  tocHtml += '<p style="color:#627d98;font-size:9pt;">Prepared: ' + today + '</p>';
+  if (sub.deadline) tocHtml += '<p style="color:#dc2626;font-weight:bold;font-size:10pt;">Submission Deadline: ' + sub.deadline + '</p>';
+  tocHtml += '<h2>Included Documents</h2>';
+  tocHtml += '<table><tr><th>#</th><th>File Name</th><th>Description</th></tr>';
+  tocLines.forEach(t => {
+    tocHtml += '<tr><td>' + t.num + '</td><td>' + t.name + '</td><td>' + t.description + '</td></tr>';
+  });
+  tocHtml += '</table>';
+
+  // List required items not in ZIP
+  const requiredForms = analysis.requiredForms || [];
+  const assetRequests = (analysis.assetRequests || []).filter(a => a.type !== 'form');
+  if (requiredForms.length > 0 || assetRequests.length > 0) {
+    tocHtml += '<h2>Additional Items Required (not included)</h2>';
+    tocHtml += '<table><tr><th>Item</th><th>Notes</th></tr>';
+    requiredForms.forEach(f => {
+      tocHtml += '<tr><td>' + (f.formName || f.name || 'Required form') + '</td><td>Complete in original PDF format</td></tr>';
+    });
+    assetRequests.forEach(a => {
+      tocHtml += '<tr><td>' + (a.description || a.name || 'Document') + '</td><td>Prepare separately</td></tr>';
+    });
+    tocHtml += '</table>';
+  }
+
+  if (sub.method) {
+    tocHtml += '<h2>Submission Instructions</h2>';
+    tocHtml += '<p>' + sub.method + '</p>';
+    if (sub.email) tocHtml += '<p>Email: ' + sub.email + '</p>';
+    if (sub.portal) tocHtml += '<p>Portal: ' + sub.portal + '</p>';
+    if (sub.address) tocHtml += '<p>Address: ' + sub.address.replace(/\n/g, ', ') + '</p>';
+  }
+
+  tocHtml += '</body></html>';
+  zip.file('00 - Submission Index.doc', '\ufeff' + tocHtml);
+
+  // --- 4. Generate and download ZIP ---
+  const zipBlob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(zipBlob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = (proposal.title || 'Proposal').replace(/[^a-zA-Z0-9 ]/g, '') + '.doc';
+  a.download = proposalTitle + ' - Submission Package.zip';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -1784,14 +2734,17 @@ function App() {
                 onSaved={() => { setVaultSaved(true); reloadVault(); }} onSkip={() => setVaultSaved(true)}
               />
             ) : null}
-            <ProposalView apiKey={apiKey} analysis={analysis} answers={questionsData||[]} priorProposals={docs.filter(d=>d.type==='prior_proposal')} initialProposal={proposalData} onProposalReady={setProposalData} onBack={() => setStep(3)}/>
+            <ProposalView apiKey={apiKey} analysis={analysis} answers={questionsData||[]} priorProposals={docs.filter(d=>d.type==='prior_proposal')} allDocuments={[...docs, ...vaultVendorDocs]} initialProposal={proposalData} onProposalReady={setProposalData} onBack={() => setStep(3)} onAssemble={() => goToStep(5)}/>
           </>
+        )}
+        {step===5 && proposalData && (
+          <SubmissionBuilder proposal={proposalData} analysis={analysis} answers={questionsData||[]} allDocuments={[...docs, ...vaultVendorDocs]} onBack={() => setStep(4)}/>
         )}
       </main>
       <footer className="border-t border-navy-100 bg-white/80 py-4 px-6">
         <div className="max-w-7xl mx-auto flex justify-between text-xs text-navy-400">
           <span>ProposalAI — Government RFP Response Engine</span>
-          <span>v0.9 — Powered by Claude AI</span>
+          <span>v1.0 — Powered by Claude AI</span>
         </div>
       </footer>
     </div>
