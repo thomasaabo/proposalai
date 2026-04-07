@@ -559,15 +559,55 @@ function AnalysisView({ apiKey, documents, initialAnalysis, onComplete, onBack }
   );
 }
 
-// ── Simple Textarea-based Editor ──
-function SimpleEditor({ value, onChange, placeholder }) {
+// ── Visual Rich Text Editor (WYSIWYG) ──
+function RichTextEditor({ value, onChange }) {
+  const editorRef = useRef(null);
+  const isInitRef = useRef(false);
+
+  useEffect(() => {
+    if (editorRef.current && !isInitRef.current) {
+      editorRef.current.innerHTML = value || '';
+      isInitRef.current = true;
+    }
+  }, []);
+
+  function handleInput() {
+    if (editorRef.current) onChange(editorRef.current.innerHTML);
+  }
+
+  function exec(cmd, val) {
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, val || null);
+    handleInput();
+  }
+
+  function isActive(cmd) {
+    try { return document.queryCommandState(cmd); } catch { return false; }
+  }
+
+  const btnClass = (cmd) => `px-2 py-1 rounded text-xs font-semibold transition-colors ${isActive(cmd) ? 'bg-navy-200 text-navy-800' : 'text-navy-500 hover:bg-navy-100 hover:text-navy-700'}`;
+
   return (
-    <textarea
-      value={value || ''}
-      onChange={e => onChange(e.target.value)}
-      placeholder={placeholder}
-      className="rich-editor w-full"
-    />
+    <div className="border border-navy-200 rounded-xl overflow-hidden bg-white">
+      <div className="flex flex-wrap items-center gap-0.5 px-3 py-2 bg-navy-50 border-b border-navy-200">
+        <button type="button" onClick={() => exec('bold')} className={btnClass('bold')} title="Bold"><strong>B</strong></button>
+        <button type="button" onClick={() => exec('italic')} className={btnClass('italic')} title="Italic"><em>I</em></button>
+        <button type="button" onClick={() => exec('underline')} className={btnClass('underline')} title="Underline"><u>U</u></button>
+        <span className="w-px h-5 bg-navy-200 mx-1"/>
+        <button type="button" onClick={() => exec('formatBlock', '<h2>')} className="px-2 py-1 rounded text-xs font-semibold text-navy-500 hover:bg-navy-100" title="Heading">H2</button>
+        <button type="button" onClick={() => exec('formatBlock', '<h3>')} className="px-2 py-1 rounded text-xs font-semibold text-navy-500 hover:bg-navy-100" title="Subheading">H3</button>
+        <button type="button" onClick={() => exec('formatBlock', '<p>')} className="px-2 py-1 rounded text-xs font-semibold text-navy-500 hover:bg-navy-100" title="Paragraph">P</button>
+        <span className="w-px h-5 bg-navy-200 mx-1"/>
+        <button type="button" onClick={() => exec('insertUnorderedList')} className={btnClass('insertUnorderedList')} title="Bullet list">• List</button>
+        <button type="button" onClick={() => exec('insertOrderedList')} className={btnClass('insertOrderedList')} title="Numbered list">1. List</button>
+        <span className="w-px h-5 bg-navy-200 mx-1"/>
+        <button type="button" onClick={() => exec('removeFormat')} className="px-2 py-1 rounded text-xs text-navy-400 hover:bg-navy-100" title="Clear formatting">✕ Clear</button>
+      </div>
+      <div ref={editorRef} contentEditable suppressContentEditableWarning
+        onInput={handleInput} onBlur={handleInput}
+        className="prose px-4 py-3 min-h-[200px] max-h-[500px] overflow-y-auto focus:outline-none"
+        style={{resize: 'vertical'}}/>
+    </div>
   );
 }
 
@@ -824,14 +864,20 @@ function QuestionsFlow({ apiKey, analysis, documents = [], priorProposals = [], 
           {q.hint ? <div className="bg-gold-400/10 border border-gold-400/20 rounded-xl p-4 mb-4"><p className="text-sm text-navy-600">💡 {q.hint}</p></div> : null}
 
           {q.questionType === 'form' ? (
-            <div className="bg-navy-50 rounded-xl p-6 mb-4">
-              {(analysis.requiredForms || []).length > 0 ? (
-                analysis.requiredForms[0]?.fields?.map((field, fi) => (
-                  <FormField key={fi} field={field} value={q.formData ? q.formData[field.fieldName] : ''} onChange={v => handleFormFieldChange(field.fieldName, v)} />
-                ))
-              ) : (
-                <p className="text-sm text-navy-600">No form fields available</p>
-              )}
+            <div className="mb-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4">
+                <p className="text-sm text-amber-800 font-medium">📋 PDF Form Required</p>
+                <p className="text-xs text-amber-700 mt-1">This form should be completed in its original PDF format with text fields filled and signatures added. Upload the completed PDF as an asset below, or use the fields here to draft your responses.</p>
+              </div>
+              <div className="bg-navy-50 rounded-xl p-6">
+                {(analysis.requiredForms || []).length > 0 ? (
+                  analysis.requiredForms[0]?.fields?.map((field, fi) => (
+                    <FormField key={fi} field={field} value={q.formData ? q.formData[field.fieldName] : ''} onChange={v => handleFormFieldChange(field.fieldName, v)} />
+                  ))
+                ) : (
+                  <p className="text-sm text-navy-600">No form fields available</p>
+                )}
+              </div>
             </div>
           ) : q.questionType === 'asset' ? (
             <div className="mb-4">
@@ -940,10 +986,8 @@ function SectionEditor({ section, onUpdate, onDelete, onMoveUp, onMoveDown, isFi
               <label className="block text-xs font-semibold text-navy-600 mb-1">Section Title</label>
               <input type="text" value={editTitle} onChange={e => setEditTitle(e.target.value)}
                 className="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none" style={{boxShadow: 'none'}} />
-              <label className="block text-xs font-semibold text-navy-600 mb-1">Content (HTML supported)</label>
-              <textarea value={editContent} onChange={e => setEditContent(e.target.value)}
-                className="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm font-mono leading-relaxed focus:outline-none"
-                style={{minHeight: '200px', resize: 'vertical', boxShadow: 'none'}} />
+              <label className="block text-xs font-semibold text-navy-600 mb-1">Content</label>
+              <RichTextEditor value={editContent} onChange={setEditContent} />
               <div className="flex gap-2 mt-3">
                 <button onClick={saveEdits} className="bg-navy-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-800">Save</button>
                 <button onClick={cancelEdits} className="border border-navy-200 text-navy-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-50">Cancel</button>
@@ -1077,7 +1121,7 @@ function ProposalView({ apiKey, analysis, answers, priorProposals = [], initialP
           <button onClick={handleCopy} className="border border-navy-200 text-navy-700 hover:bg-navy-50 px-5 py-2.5 rounded-xl font-semibold text-sm">
             {copied ? '✓ Copied!' : '📋 Copy All'}
           </button>
-          <button onClick={() => downloadAsWord(proposal)} className="bg-navy-900 hover:bg-navy-800 text-white px-6 py-2.5 rounded-xl font-semibold text-sm shadow-lg flex items-center gap-2">
+          <button onClick={() => downloadAsWord(proposal, analysis, answers)} className="bg-navy-900 hover:bg-navy-800 text-white px-6 py-2.5 rounded-xl font-semibold text-sm shadow-lg flex items-center gap-2">
             📥 Download .doc
           </button>
         </div>
@@ -1085,6 +1129,7 @@ function ProposalView({ apiKey, analysis, answers, priorProposals = [], initialP
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-4">
+          <CoverLetter analysis={analysis} answers={answers} proposal={proposal} onUpdate={updateProposal} />
           {sections.map((sec, idx) => (
             <SectionEditor
               key={sec.id}
@@ -1126,10 +1171,12 @@ function ProposalView({ apiKey, analysis, answers, priorProposals = [], initialP
             <p className="text-xs text-navy-300 mt-2">{sections.length ? Math.round(filledCount / sections.length * 100) : 0}% complete</p>
           </div>
 
+          <ComplianceChecklist analysis={analysis} proposal={proposal} />
+
           <div className="bg-white rounded-xl border border-navy-100 shadow-sm p-4">
             <h4 className="text-sm font-semibold text-navy-800 mb-3">Quick Actions</h4>
             <div className="space-y-2">
-              <button onClick={() => downloadAsWord(proposal)} className="w-full text-left text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg flex items-center gap-2">📥 Download as Word</button>
+              <button onClick={() => downloadAsWord(proposal, analysis, answers)} className="w-full text-left text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg flex items-center gap-2">📥 Download as Word</button>
               <button onClick={handleCopy} className="w-full text-left text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg flex items-center gap-2">📋 Copy full text</button>
               <button onClick={() => window.print()} className="w-full text-left text-sm text-navy-700 hover:bg-navy-50 px-3 py-2 rounded-lg flex items-center gap-2">🖨️ Print / Save PDF</button>
             </div>
@@ -1149,8 +1196,234 @@ function ProposalView({ apiKey, analysis, answers, priorProposals = [], initialP
   );
 }
 
+// ── Cover Letter / Introduction ──
+function CoverLetter({ analysis, answers, proposal, onUpdate }) {
+  const [editing, setEditing] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+
+  const rfp = analysis.rfpSummary || {};
+  const sub = analysis.submissionInstructions || {};
+
+  // Extract vendor info from Q&A answers
+  const allAnswers = (answers || []).filter(a => a.answer && a.answer.trim());
+  const companyAnswer = allAnswers.find(a => /company|firm|organization/i.test(a.question));
+  const contactAnswer = allAnswers.find(a => /contact|principal|authorized|signatory/i.test(a.question));
+
+  const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+
+  // Build letter from available data
+  const letterData = proposal.coverLetter || {
+    date: today,
+    recipientName: sub.address ? sub.address.split('\n')[0] : (rfp.agency || '[Procurement Officer Name]'),
+    recipientOrg: rfp.agency || '[Agency Name]',
+    recipientAddress: sub.address || '[Agency Address]',
+    companyName: companyAnswer ? companyAnswer.answer.split('.')[0].substring(0, 60) : '[Your Company Name]',
+    signerName: contactAnswer ? contactAnswer.answer.split(',')[0].split('.')[0].substring(0, 40) : '[Authorized Signatory]',
+    signerTitle: '[Title]',
+    signerEmail: '[email]',
+    signerPhone: '[phone]',
+    body: null, // will be generated
+  };
+
+  // Generate the letter body HTML
+  const letterHtml = letterData.body || `<p>Dear ${letterData.recipientName.replace(/\[.*\]/, 'Sir/Madam')},</p>
+<p>We are pleased to submit this comprehensive proposal in response to the Request for Proposal${rfp.solicitation ? ' (' + rfp.solicitation + ')' : ''} issued by <strong>${letterData.recipientOrg}</strong>${rfp.title ? ' seeking <em>' + rfp.title + '</em>' : ''}.</p>
+<p><strong>${letterData.companyName}</strong> is honored to have the opportunity to collaborate with ${letterData.recipientOrg} on this undertaking, and we are confident in our ability to deliver beyond satisfactory results.</p>
+<p>What follows is our proposal including ${(proposal.sections || []).map(s => s.title).slice(0, 4).join(', ')}${(proposal.sections || []).length > 4 ? ', and additional supporting materials' : ''}. This proposal has been prepared in strict adherence to the format and requirements outlined in the RFP.</p>
+<p>We welcome an opportunity to review the contents of this proposal and the shared documents over a call or in an in-person session at your convenience.</p>`;
+
+  function handleSave(newBody) {
+    const updated = { ...proposal, coverLetter: { ...letterData, body: newBody } };
+    onUpdate(updated);
+    setEditing(false);
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-navy-100 shadow-sm mb-4">
+      <div className="flex items-center">
+        <button onClick={() => setExpanded(!expanded)} className="flex-1 px-6 py-4 flex items-center gap-4 text-left hover:bg-navy-50/50">
+          <span className="text-lg">✉️</span>
+          <div className="flex-1">
+            <h3 className="font-semibold text-navy-800">Introduction / Cover Letter</h3>
+            <p className="text-xs text-navy-400">Formal letter preceding the proposal</p>
+          </div>
+          <span className="text-navy-400">{expanded ? '▲' : '▼'}</span>
+        </button>
+      </div>
+      {expanded && (
+        <div className="border-t border-navy-100">
+          {editing ? (
+            <div className="px-6 py-4">
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div>
+                  <label className="block text-xs font-semibold text-navy-600 mb-1">Your Company</label>
+                  <input type="text" defaultValue={letterData.companyName} className="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm focus:outline-none" style={{boxShadow:'none'}}
+                    onBlur={e => { letterData.companyName = e.target.value; }} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-navy-600 mb-1">Signer Name</label>
+                  <input type="text" defaultValue={letterData.signerName} className="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm focus:outline-none" style={{boxShadow:'none'}}
+                    onBlur={e => { letterData.signerName = e.target.value; }} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-navy-600 mb-1">Signer Title</label>
+                  <input type="text" defaultValue={letterData.signerTitle} className="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm focus:outline-none" style={{boxShadow:'none'}}
+                    onBlur={e => { letterData.signerTitle = e.target.value; }} />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-navy-600 mb-1">Email</label>
+                  <input type="text" defaultValue={letterData.signerEmail} className="w-full border border-navy-200 rounded-lg px-3 py-2 text-sm focus:outline-none" style={{boxShadow:'none'}}
+                    onBlur={e => { letterData.signerEmail = e.target.value; }} />
+                </div>
+              </div>
+              <label className="block text-xs font-semibold text-navy-600 mb-1">Letter Body</label>
+              <RichTextEditor value={letterHtml} onChange={val => { letterData.body = val; }} />
+              <div className="flex gap-2 mt-3">
+                <button onClick={() => handleSave(letterData.body || letterHtml)} className="bg-navy-900 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-800">Save</button>
+                <button onClick={() => setEditing(false)} className="border border-navy-200 text-navy-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-navy-50">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="px-8 py-6">
+                <div className="text-right text-sm text-navy-600 mb-6">{letterData.date}</div>
+                <div className="text-sm text-navy-700 mb-6 whitespace-pre-line">{letterData.recipientName}
+{letterData.recipientOrg}
+{letterData.recipientAddress}</div>
+                <div className="prose text-sm" dangerouslySetInnerHTML={{__html: letterHtml}} />
+                <div className="mt-8 text-sm text-navy-700">
+                  <p className="mb-1">Best,</p>
+                  <p className="italic text-navy-400 text-xs mb-3">[Signature]</p>
+                  <p className="font-semibold">{letterData.signerName}</p>
+                  <p>{letterData.signerTitle}</p>
+                  <p className="mt-2 text-navy-500">{letterData.companyName}</p>
+                  {letterData.signerEmail !== '[email]' && <p className="text-navy-400 text-xs">{letterData.signerEmail}</p>}
+                  {letterData.signerPhone !== '[phone]' && <p className="text-navy-400 text-xs">{letterData.signerPhone}</p>}
+                </div>
+              </div>
+              <div className="px-6 py-3 border-t border-navy-50">
+                <button onClick={() => setEditing(true)} className="text-xs text-navy-500 hover:text-navy-800 font-medium px-3 py-1.5 rounded-lg hover:bg-navy-50">✏️ Edit Cover Letter</button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Live Compliance Checklist ──
+function ComplianceChecklist({ analysis, proposal }) {
+  const [checks, setChecks] = useState({});
+  const [expanded, setExpanded] = useState(true);
+
+  function toggle(key) {
+    setChecks(prev => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  const formatItems = (analysis.requiredFormat || []).map((f, i) => ({
+    key: 'fmt_' + i,
+    label: (f.sectionNumber ? f.sectionNumber + '. ' : '') + f.sectionTitle,
+    type: 'format',
+    critical: true,
+    ref: f.description || '',
+  }));
+
+  const reqItems = (analysis.requirements || []).filter(r => r.type === 'mandatory').map((r, i) => ({
+    key: 'req_' + i,
+    label: r.text.length > 80 ? r.text.substring(0, 80) + '...' : r.text,
+    type: 'requirement',
+    critical: true,
+    ref: r.section || '',
+  }));
+
+  const compItems = (analysis.complianceChecklist || []).map((c, i) => ({
+    key: 'comp_' + i,
+    label: c.item,
+    type: 'compliance',
+    critical: c.critical,
+    ref: c.rfpReference || '',
+  }));
+
+  const allItems = [...formatItems, ...reqItems, ...compItems];
+  const checkedCount = allItems.filter(it => checks[it.key]).length;
+  const pct = allItems.length ? Math.round(checkedCount / allItems.length * 100) : 0;
+
+  const groups = [
+    { title: 'Required Format', icon: '📐', items: formatItems },
+    { title: 'Mandatory Requirements', icon: '📋', items: reqItems },
+    { title: 'Compliance Items', icon: '✅', items: compItems },
+  ].filter(g => g.items.length > 0);
+
+  return (
+    <div className="bg-white rounded-xl border border-navy-100 shadow-sm">
+      <button onClick={() => setExpanded(!expanded)} className="w-full px-4 py-3 flex items-center justify-between hover:bg-navy-50/50">
+        <div className="flex items-center gap-2">
+          <span className="text-sm">📝</span>
+          <h4 className="text-sm font-semibold text-navy-800">Compliance Checklist</h4>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`text-xs font-bold ${pct === 100 ? 'text-emerald-600' : pct > 50 ? 'text-gold-500' : 'text-navy-400'}`}>{checkedCount}/{allItems.length}</span>
+          <span className="text-navy-400 text-xs">{expanded ? '▲' : '▼'}</span>
+        </div>
+      </button>
+      {expanded && (
+        <div className="border-t border-navy-100 px-4 py-3">
+          <div className="w-full bg-navy-100 rounded-full h-1.5 mb-3">
+            <div className={`h-1.5 rounded-full transition-all ${pct === 100 ? 'bg-emerald-400' : 'bg-gold-400'}`} style={{width: pct + '%'}}/>
+          </div>
+          {groups.map(g => (
+            <div key={g.title} className="mb-3 last:mb-0">
+              <p className="text-xs font-semibold text-navy-600 mb-1.5 flex items-center gap-1">{g.icon} {g.title}</p>
+              <div className="space-y-1">
+                {g.items.map(it => (
+                  <label key={it.key} className="flex items-start gap-2 cursor-pointer group py-0.5">
+                    <input type="checkbox" checked={!!checks[it.key]} onChange={() => toggle(it.key)}
+                      className="w-3.5 h-3.5 mt-0.5 rounded flex-shrink-0" />
+                    <span className={`text-xs leading-relaxed ${checks[it.key] ? 'text-navy-400 line-through' : 'text-navy-700'}`}>
+                      {it.label}
+                      {it.critical && !checks[it.key] && <span className="ml-1 text-red-400">*</span>}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Download as Word Doc ──
-function downloadAsWord(proposal) {
+function downloadAsWord(proposal, analysis, answers) {
+  // Cover letter page
+  const cl = proposal.coverLetter || {};
+  const rfp = (analysis || {}).rfpSummary || {};
+  const sub = (analysis || {}).submissionInstructions || {};
+  const today = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+  const clCompany = cl.companyName || '[Your Company Name]';
+  const clSigner = cl.signerName || '[Authorized Signatory]';
+  const clTitle = cl.signerTitle || '[Title]';
+  const clRecipient = cl.recipientName || (rfp.agency || '[Procurement Officer]');
+  const clOrg = cl.recipientOrg || rfp.agency || '[Agency]';
+  const clAddr = cl.recipientAddress || sub.address || '';
+  const clBody = cl.body || `<p>Dear ${clRecipient},</p><p>We are pleased to submit this comprehensive proposal in response to the Request for Proposal${rfp.solicitation ? ' (' + rfp.solicitation + ')' : ''} issued by <strong>${clOrg}</strong>${rfp.title ? ' seeking <em>' + rfp.title + '</em>' : ''}.</p><p><strong>${clCompany}</strong> is honored to have the opportunity to collaborate with ${clOrg} on this undertaking, and we are confident in our ability to deliver beyond satisfactory results.</p><p>We welcome an opportunity to review the contents of this proposal at your convenience.</p>`;
+
+  const coverLetterHtml = `
+    <div style="page-break-after:always;">
+      <p style="text-align:right;color:#334e68;">${cl.date || today}</p>
+      <p style="color:#334e68;white-space:pre-line;margin-top:32px;">${clRecipient}\n${clOrg}\n${clAddr}</p>
+      <div style="margin-top:24px;">${clBody}</div>
+      <p style="margin-top:40px;">Best,</p>
+      <p style="margin-top:32px;font-style:italic;color:#9fb3c8;font-size:9pt;">[Signature]</p>
+      <p style="font-weight:bold;margin-top:4px;">${clSigner}</p>
+      <p>${clTitle}</p>
+      <p style="margin-top:12px;color:#627d98;">${clCompany}</p>
+      ${cl.signerEmail && cl.signerEmail !== '[email]' ? '<p style="color:#829ab1;font-size:9pt;">' + cl.signerEmail + '</p>' : ''}
+      ${cl.signerPhone && cl.signerPhone !== '[phone]' ? '<p style="color:#829ab1;font-size:9pt;">' + cl.signerPhone + '</p>' : ''}
+    </div>`;
+
   const sections = (proposal.sections || []).map(s =>
     '<h2 style="color:#102a43;border-bottom:2px solid #d9e2ec;padding-bottom:4px;margin-top:24px;">' +
     s.title + '</h2>' + (s.content || '')
@@ -1171,6 +1444,7 @@ function downloadAsWord(proposal) {
     'ul, ol { margin-bottom: 8px; padding-left: 24px; }',
     'li { margin-bottom: 4px; }',
     '</style></head><body>',
+    coverLetterHtml,
     '<h1>' + (proposal.title || 'Proposal Draft') + '</h1>',
     '<p style="color:#627d98;font-size:10pt;">' + (proposal.solicitation || '') + '</p>',
     '<hr style="border:1px solid #d9e2ec;margin:16px 0;">',
