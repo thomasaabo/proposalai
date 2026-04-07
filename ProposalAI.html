@@ -259,8 +259,8 @@ function ApiKeySetup({ onReady }) {
 }
 
 // ── Document Intake ──
-function DocumentIntake({ apiKey, onComplete }) {
-  const [docs, setDocs] = useState([]);
+function DocumentIntake({ apiKey, initialDocs, onComplete, onDocsChange }) {
+  const [docs, setDocs] = useState(initialDocs || []);
   const [classifying, setClassifying] = useState(false);
   const [error, setError] = useState('');
   const [urlInput, setUrlInput] = useState('');
@@ -321,12 +321,14 @@ function DocumentIntake({ apiKey, onComplete }) {
   };
 
   const hasRFP = docs.some(d => d.type === 'rfp' || d.type === 'rfp_form');
+  const isRevisit = initialDocs && initialDocs.length > 0;
+  const docsChanged = isRevisit && JSON.stringify(docs.map(d=>d.id).sort()) !== JSON.stringify((initialDocs||[]).map(d=>d.id).sort());
 
   return (
     <div className="max-w-4xl mx-auto fade-in">
       <div className="text-center mb-8">
-        <h2 className="text-3xl font-bold text-navy-900 mb-3">Upload Your RFP Documents</h2>
-        <p className="text-navy-500 text-lg max-w-2xl mx-auto">Drop everything in — the RFP, prior winning proposals, company overview, team bios, past performance. AI will classify and analyze.</p>
+        <h2 className="text-3xl font-bold text-navy-900 mb-3">{isRevisit ? 'Your Documents' : 'Upload Your RFP Documents'}</h2>
+        <p className="text-navy-500 text-lg max-w-2xl mx-auto">{isRevisit ? 'Add, remove, or re-classify documents. Changes will re-analyze your RFP.' : 'Drop everything in — the RFP, prior winning proposals, company overview, team bios, past performance. AI will classify and analyze.'}</p>
       </div>
 
       <div onClick={()=>fileRef.current?.click()}
@@ -384,9 +386,14 @@ function DocumentIntake({ apiKey, onComplete }) {
       )}
 
       {docs.length > 0 && hasRFP && (
-        <div className="flex justify-end">
-          <button onClick={()=>onComplete(docs)} className="bg-navy-900 hover:bg-navy-800 text-white px-8 py-3 rounded-xl font-semibold text-sm shadow-lg">
-            Analyze RFP →
+        <div className="flex justify-end gap-3">
+          {isRevisit && !docsChanged && (
+            <button onClick={()=>onComplete(docs, false)} className="bg-navy-200 hover:bg-navy-300 text-navy-700 px-8 py-3 rounded-xl font-semibold text-sm">
+              Continue →
+            </button>
+          )}
+          <button onClick={()=>onComplete(docs, docsChanged || !isRevisit)} className={`${docsChanged ? 'bg-gold-400 hover:bg-gold-500 text-navy-900' : 'bg-navy-900 hover:bg-navy-800 text-white'} px-8 py-3 rounded-xl font-semibold text-sm shadow-lg`}>
+            {isRevisit && docsChanged ? '🔄 Update & Re-analyze' : isRevisit ? 'Re-analyze →' : 'Analyze RFP →'}
           </button>
         </div>
       )}
@@ -1250,6 +1257,13 @@ function VaultBar({ vault, onManage }) {
 }
 
 // ── Save to Vault Prompt (shown after proposal completion) ──
+const DOC_TYPE_LABELS = {
+  vendor_capability: 'Company Info', vendor_summary: 'Company Info',
+  certifications: 'Certifications', team_bios: 'Team',
+  past_performance: 'Past Performance', prior_proposal: 'Prior Proposal',
+  supporting: 'Other', web_content: 'Web Content',
+};
+
 function SaveToVaultPrompt({ apiKey, vaultId, documents, analysis, questions, proposal, onSaved, onSkip }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1326,7 +1340,7 @@ function SaveToVaultPrompt({ apiKey, vaultId, documents, analysis, questions, pr
               <label key={i} className="flex items-center gap-2 text-sm text-navy-700 cursor-pointer">
                 <input type="checkbox" checked={selectedDocs.has(i)} onChange={() => toggleDoc(i)} className="w-3.5 h-3.5" />
                 <span>{d.name}</span>
-                <span className="text-xs text-navy-400">({d.type})</span>
+                <span className="text-xs text-navy-400">({DOC_TYPE_LABELS[d.type] || d.type})</span>
               </label>
             ))}
           </div>
@@ -1484,7 +1498,7 @@ function App() {
         </div>
       ) : null}
       <main className="flex-1 px-6 py-8">
-        {step===1 && <DocumentIntake apiKey={apiKey} onComplete={d=>{setDocs(d);goToStep(2);}}/>}
+        {step===1 && <DocumentIntake apiKey={apiKey} initialDocs={docs} onComplete={(d, reanalyze)=>{setDocs(d); if(reanalyze){setAnalysis(null);setQuestionsData(null);setProposalData(null);setVaultSaved(false);} goToStep(2);}}/>}
         {step===2 && <AnalysisView apiKey={apiKey} documents={docs} initialAnalysis={analysis} onComplete={a=>{setAnalysis(a);goToStep(3);}} onBack={() => setStep(1)}/>}
         {step===3 && <QuestionsFlow apiKey={apiKey} analysis={analysis} documents={[...docs, ...vaultVendorDocs]} priorProposals={docs.filter(d=>d.type==='prior_proposal')} vaultSnippets={vault.snippets || []} initialQuestions={questionsData} onComplete={handleQuestionsComplete} onBack={() => setStep(2)}/>}
         {step===4 && (
